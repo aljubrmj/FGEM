@@ -79,7 +79,7 @@ Maybe you can mention me or this repo in the acknowledgements too
 
 <!-- About the Project -->
 ## :star2: About the Project
-This was developed in the Stanford Geothermal Program to serve as a tool for evaluating the techno-economics of flexible geothermal operations. It involves the techno-economic modeling of thermal energy storage and battery units towards flexible generation.
+This was developed in the Stanford Geothermal Program to serve as a tool for evaluating the techno-economics of flexible geothermal operations. It makes use of anlytical and iterative models alongside correlations develoepd in other works[^1][^2]. It involves the techno-economic modeling of thermal energy storage and battery units towards flexible generation.
 
 <!-- Screenshots -->
 <!-- ### :camera: Screenshots
