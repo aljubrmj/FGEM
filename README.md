@@ -11,9 +11,9 @@ Maybe you can mention me or this repo in the acknowledgements too
   <img src="assets/logo.png" alt="logo" width="200" height="auto" />
 <!--   <h1>Flexible Geothermal Economic Modeling</h1> -->
   
-  <p>
+<!--   <p>
     Flexible Geothermal Economic Modeling 
-  </p>
+  </p> -->
   
   
 <!-- Badges -->
