@@ -73,13 +73,15 @@ Maybe you can mention me or this repo in the acknowledgements too
 - [FAQ](#grey_question-faq)
 - [License](#warning-license)
 - [Contact](#handshake-contact)
-- [Acknowledgements](#gem-acknowledgements)
+<!-- - [Acknowledgements](#gem-acknowledgements) -->
 
   
 
 <!-- About the Project -->
 ## :star2: About the Project
 This was developed in the Stanford Geothermal Program to serve as a tool for evaluating the techno-economics of flexible geothermal operations. It makes use of anlytical and iterative models alongside correlations develoepd in other works[^1][^2]. It involves the techno-economic modeling of thermal energy storage and battery units towards flexible generation.
+
+Project Publication: [[https://github.com/Louis3797/awesome-readme-template](https://github.com/aljubrmj/FGEM/tree/main#user-content-fnref-1-d1a3bb1468d825d98b9d4b12fc5c363c)]([https://github.com/Louis3797/awesome-readme-template](https://github.com/aljubrmj/FGEM/tree/main#user-content-fnref-1-d1a3bb1468d825d98b9d4b12fc5c363c))
 
 <!-- Screenshots -->
 <!-- ### :camera: Screenshots
@@ -292,15 +294,12 @@ Distributed under the no License. See LICENSE.txt for more information.
 <!-- Contact -->
 ## :handshake: Contact
 
-Your Name - [@twitter_handle](https://twitter.com/twitter_handle) - email@email_client.com
-
-Project Link: [https://github.com/Louis3797/awesome-readme-template](https://github.com/Louis3797/awesome-readme-template)
-
+Mohammad Aljubran - [@linkedin_handle](https://www.linkedin.com/in/mohammad-aljubran) - aljubrmj@stanford.edu
 
 <!-- Acknowledgments -->
-## :gem: Acknowledgements
+<!-- ## :gem: Acknowledgements
 
-Correlations used in this model across both upstream and downstream components are based on GETEM and GEOPHIRES.
+Correlations used in this model across both upstream and downstream components are based on GETEM and GEOPHIRES. -->
 
 [^1]: Beckers, K. F., & McCabe, K. (2019). GEOPHIRES v2. 0: updated geothermal techno-economic simulation tool. Geothermal Energy, 7, 1-28.
 [^2]: Mines, G. L. (2016). GETEM User Manual. INL: Idaho Falls, ID, USA.
