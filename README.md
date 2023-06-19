@@ -68,9 +68,9 @@ Maybe you can mention me or this repo in the acknowledgements too
 <!--   * [Deployment](#triangular_flag_on_post-deployment) -->
 <!-- - [Usage](#eyes-usage) -->
 <!-- - [Roadmap](#compass-roadmap) -->
-- [Contributing](#wave-contributing)
 <!--   * [Code of Conduct](#scroll-code-of-conduct) -->
 <!-- - [FAQ](#grey_question-faq) -->
+- [Contributing](#wave-contributing)
 - [License](#warning-license)
 - [Contact](#handshake-contact)
 <!-- - [Acknowledgements](#gem-acknowledgements) -->
