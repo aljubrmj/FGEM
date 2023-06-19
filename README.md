@@ -81,7 +81,7 @@ Maybe you can mention me or this repo in the acknowledgements too
 ## :star2: About the Project
 This was developed in the Stanford Geothermal Program to serve as a tool for evaluating the techno-economics of flexible geothermal operations. It makes use of anlytical and iterative models alongside correlations develoepd in other works[^1][^2]. It involves the techno-economic modeling of thermal energy storage and battery units towards flexible generation.
 
-[Project Publication](https://github.com/aljubrmj/FGEM/tree/main#user-content-fnref-1-d1a3bb1468d825d98b9d4b12fc5c363c)
+[Project Publication: xyz](https://github.com/aljubrmj/FGEM/tree/main#user-content-fnref-1-d1a3bb1468d825d98b9d4b12fc5c363c)
 
 <!-- Screenshots -->
 <!-- ### :camera: Screenshots
