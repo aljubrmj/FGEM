@@ -163,7 +163,7 @@ To run this project, you will need to add the following environment variables to
 
 `API_KEY`
 
-`ANOTHER_API_KEY` --> -->
+`ANOTHER_API_KEY` --> 
 
 <!-- Getting Started -->
 ## 	:toolbox: Getting Started
