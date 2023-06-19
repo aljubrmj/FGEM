@@ -79,7 +79,7 @@ Maybe you can mention me or this repo in the acknowledgements too
 
 <!-- About the Project -->
 ## :star2: About the Project
-To run this project, you will need to add the following environment variables to your .env file
+This was developed in the Stanford Geothermal Program to serve as a tool for evaluating the techno-economics of flexible geothermal operations. It involves the techno-economic modeling of thermal energy storage and battery units towards flexible generation.
 
 <!-- Screenshots -->
 <!-- ### :camera: Screenshots
@@ -300,10 +300,8 @@ Project Link: [https://github.com/Louis3797/awesome-readme-template](https://git
 <!-- Acknowledgments -->
 ## :gem: Acknowledgements
 
-Use this section to mention useful resources and libraries that you have used in your projects.
+Correlations used in this model across both upstream and downstream components are based on GETEM and GEOPHIRES.
 
- - [Shields.io](https://shields.io/)
- - [Awesome README](https://github.com/matiassingers/awesome-readme)
- - [Emoji Cheat Sheet](https://github.com/ikatyang/emoji-cheat-sheet/blob/master/README.md#travel--places)
- - [Readme Template](https://github.com/othneildrew/Best-README-Template)
+[^1]: Beckers, K. F., & McCabe, K. (2019). GEOPHIRES v2. 0: updated geothermal techno-economic simulation tool. Geothermal Energy, 7, 1-28.
+[^2]: Mines, G. L. (2016). GETEM User Manual. INL: Idaho Falls, ID, USA.
 
