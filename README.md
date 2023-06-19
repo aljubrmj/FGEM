@@ -92,7 +92,7 @@ This was developed in the Stanford Geothermal Program to serve as a tool for eva
 
 
 <!-- TechStack -->
-### :space_invader: Tech Stack
+<!-- ### :space_invader: Tech Stack
 
 <details>
   <summary>Client</summary>
@@ -102,9 +102,9 @@ This was developed in the Stanford Geothermal Program to serve as a tool for eva
     <li><a href="https://reactjs.org/">React.js</a></li>
     <li><a href="https://tailwindcss.com/">TailwindCSS</a></li>
   </ul>
-</details>
+</details> -->
 
-<details>
+<!-- <details>
   <summary>Server</summary>
   <ul>
     <li><a href="https://www.typescriptlang.org/">Typescript</a></li>
@@ -116,9 +116,9 @@ This was developed in the Stanford Geothermal Program to serve as a tool for eva
     <li><a href="https://www.apollographql.com/">Apollo</a></li>
     <li><a href="https://graphql.org/">GraphQL</a></li>
   </ul>
-</details>
+</details> -->
 
-<details>
+<!-- <details>
 <summary>Database</summary>
   <ul>
     <li><a href="https://www.mysql.com/">MySQL</a></li>
@@ -127,26 +127,26 @@ This was developed in the Stanford Geothermal Program to serve as a tool for eva
     <li><a href="https://neo4j.com/">Neo4j</a></li>
     <li><a href="https://www.mongodb.com/">MongoDB</a></li>
   </ul>
-</details>
+</details> -->
 
-<details>
+<!-- <details>
 <summary>DevOps</summary>
   <ul>
     <li><a href="https://www.docker.com/">Docker</a></li>
     <li><a href="https://www.jenkins.io/">Jenkins</a></li>
     <li><a href="https://circleci.com/">CircleCLI</a></li>
   </ul>
-</details>
+</details> -->
 
 <!-- Features -->
-### :dart: Features
+<!-- ### :dart: Features
 
 - Feature 1
 - Feature 2
-- Feature 3
+- Feature 3 -->
 
 <!-- Color Reference -->
-### :art: Color Reference
+<!-- ### :art: Color Reference
 
 | Color             | Hex                                                                |
 | ----------------- | ------------------------------------------------------------------ |
@@ -154,16 +154,16 @@ This was developed in the Stanford Geothermal Program to serve as a tool for eva
 | Secondary Color | ![#393E46](https://via.placeholder.com/10/393E46?text=+) #393E46 |
 | Accent Color | ![#00ADB5](https://via.placeholder.com/10/00ADB5?text=+) #00ADB5 |
 | Text Color | ![#EEEEEE](https://via.placeholder.com/10/EEEEEE?text=+) #EEEEEE |
-
+ -->
 
 <!-- Env Variables -->
-### :key: Environment Variables
+<!-- ### :key: Environment Variables
 
 To run this project, you will need to add the following environment variables to your .env file
 
 `API_KEY`
 
-`ANOTHER_API_KEY` -->
+`ANOTHER_API_KEY` --> -->
 
 <!-- Getting Started -->
 ## 	:toolbox: Getting Started
