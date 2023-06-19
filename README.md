@@ -55,11 +55,11 @@ Maybe you can mention me or this repo in the acknowledgements too
 # :notebook_with_decorative_cover: Table of Contents
 
 - [About the Project](#star2-about-the-project)
-  * [Screenshots](#camera-screenshots)
+<!--   * [Screenshots](#camera-screenshots)
   * [Tech Stack](#space_invader-tech-stack)
   * [Features](#dart-features)
   * [Color Reference](#art-color-reference)
-  * [Environment Variables](#key-environment-variables)
+  * [Environment Variables](#key-environment-variables) -->
 - [Getting Started](#toolbox-getting-started)
   * [Prerequisites](#bangbang-prerequisites)
   * [Installation](#gear-installation)
@@ -79,10 +79,10 @@ Maybe you can mention me or this repo in the acknowledgements too
 
 <!-- About the Project -->
 ## :star2: About the Project
-
+To run this project, you will need to add the following environment variables to your .env file
 
 <!-- Screenshots -->
-### :camera: Screenshots
+<!-- ### :camera: Screenshots
 
 <div align="center"> 
   <img src="https://placehold.co/600x400?text=Your+Screenshot+here" alt="screenshot" />
@@ -161,7 +161,7 @@ To run this project, you will need to add the following environment variables to
 
 `API_KEY`
 
-`ANOTHER_API_KEY`
+`ANOTHER_API_KEY` -->
 
 <!-- Getting Started -->
 ## 	:toolbox: Getting Started
