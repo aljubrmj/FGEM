@@ -294,7 +294,7 @@ Distributed under the MIT License. See LICENSE.txt for more information.
 <!-- Contact -->
 ## :handshake: Contact
 
-Mohammad Aljubran - [@linkedin_handle](https://www.linkedin.com/in/mohammad-aljubran) - aljubrmj@stanford.edu
+Mohammad Aljubran - [LinkedIn](https://www.linkedin.com/in/mohammad-aljubran) - aljubrmj@stanford.edu
 
 <!-- Acknowledgments -->
 <!-- ## :gem: Acknowledgements
