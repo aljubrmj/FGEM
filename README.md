@@ -81,8 +81,6 @@ Maybe you can mention me or this repo in the acknowledgements too
 ## :star2: About the Project
 This was developed in the Stanford Geothermal Program to serve as a tool for evaluating the techno-economics of flexible geothermal operations. It makes use of anlytical and iterative models alongside correlations develoepd in other works[^1][^2]. It involves the techno-economic modeling of thermal energy storage and battery units towards flexible generation.
 
-[Project Publication: xyz](https://github.com/aljubrmj/FGEM/tree/main#user-content-fnref-1-d1a3bb1468d825d98b9d4b12fc5c363c)
-
 <!-- Screenshots -->
 <!-- ### :camera: Screenshots
 
@@ -168,10 +166,27 @@ To run this project, you will need to add the following environment variables to
 <!-- Getting Started -->
 ## 	:toolbox: Getting Started
 
-<!-- Prerequisites -->
-### :bangbang: Prerequisites
+### :eight_spoked_asterisk: Run on Google Colab (No Local Installation)
+Follow this [Google Colab LINK](https://colab.research.google.com/drive/1nHoqSLD8QRXfB_kHNa67VRN8kE4dkjmm?usp=sharing) 
 
-This project uses Yarn as package manager
+<!-- Prerequisites -->
+### :gear: Local Installation
+
+1. Create a Python 3.8 or newer virtual environment
+   *If you're not sure how to create a suitable Python environment, the easiest way is using [Miniconda](https://docs.conda.io/en/latest/miniconda.html). On a Mac, for example, you can install Miniconda using [Homebrew](https://brew.sh/):*
+
+    ```
+    brew install miniconda
+    ```
+
+    *Then you can create and activate a new Python environment by running:*
+
+    ```
+    conda create -n my-package python=3.9
+    conda activate my-package
+    ```
+2. Clone this FGEM github repositary by running the following
+3. 
 
 ```bash
  npm install --global yarn
