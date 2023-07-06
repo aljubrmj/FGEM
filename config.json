@@ -1,7 +1,7 @@
 {
     "metadata": {
-        "base_dir": "/Users/mohammadaljubran/Desktop/phd/research/code",
-        "data_dir": "Data",
+        "base_dir": ".",
+        "data_dir": "data",
         "time_init": "2025-01-01",
         "market_dir": "market",
         "state": "CA"
