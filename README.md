@@ -185,69 +185,21 @@ Follow this [Google Colab LINK](https://colab.research.google.com/drive/1nHoqSLD
     conda create -n my-package python=3.9
     conda activate my-package
     ```
-2. Clone this FGEM github repositary by running the following
-3. 
+2. Clone the FGEM github repositary, change directories, and install the required Python packages by running the following:
 
 ```bash
- npm install --global yarn
+git clone https://github.com/aljubrmj/FGEM
+cd FGEM
+pip install -r requirements.txt
 ```
-
-<!-- Installation -->
-### :gear: Installation
-
-Install my-project with npm
-
-```bash
-  yarn install my-project
-  cd my-project
-```
-   
 <!-- Running Tests -->
 ### :test_tube: Running Tests
 
-To run tests, run the following command
+To run tests, run the following command in the FGEM directory
 
 ```bash
-  yarn test test
+  python example.py
 ```
-
-<!-- Run Locally -->
-<!-- ### :running: Run Locally
-
-Clone the project
-
-```bash
-  git clone https://github.com/Louis3797/awesome-readme-template.git
-```
-
-Go to the project directory
-
-```bash
-  cd my-project
-```
-
-Install dependencies
-
-```bash
-  yarn install
-```
-
-Start the server
-
-```bash
-  yarn start
-``` -->
-
-
-<!-- Deployment -->
-<!-- ### :triangular_flag_on_post: Deployment
-
-To deploy this project run
-
-```bash
-  yarn deploy
-``` -->
-
 
 <!-- Usage -->
 <!-- ## :eyes: Usage
