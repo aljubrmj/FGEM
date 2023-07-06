@@ -55,31 +55,14 @@ Maybe you can mention me or this repo in the acknowledgements too
 # :notebook_with_decorative_cover: Table of Contents
 
 - [About the Project](#star2-about-the-project)
-<!--   * [Screenshots](#camera-screenshots)
-  * [Tech Stack](#space_invader-tech-stack)
-  * [Features](#dart-features)
-  * [Color Reference](#art-color-reference)
-  * [Environment Variables](#key-environment-variables) -->
 - [Getting Started](#toolbox-getting-started)
-  * [Prerequisites](#bangbang-prerequisites)
-  * [Installation](#gear-installation)
-  * [Running Tests](#test_tube-running-tests)
-<!--   * [Run Locally](#running-run-locally) -->
-<!--   * [Deployment](#triangular_flag_on_post-deployment) -->
-<!-- - [Usage](#eyes-usage) -->
-<!-- - [Roadmap](#compass-roadmap) -->
-<!--   * [Code of Conduct](#scroll-code-of-conduct) -->
-<!-- - [FAQ](#grey_question-faq) -->
 - [Contributing](#wave-contributing)
 - [License](#warning-license)
 - [Contact](#handshake-contact)
-<!-- - [Acknowledgements](#gem-acknowledgements) -->
-
   
-
 <!-- About the Project -->
 ## :star2: About the Project
-This was developed in the Stanford Geothermal Program to serve as a tool for evaluating the techno-economics of flexible geothermal operations. It makes use of anlytical and iterative models alongside correlations develoepd in other works[^1][^2]. It involves the techno-economic modeling of thermal energy storage and battery units towards flexible generation.
+This was developed in the Stanford Geothermal Program to serve as a tool for evaluating the techno-economics of flexible geothermal operations. It makes use of anlytical and iterative models alongside correlations develoepd in other works[^1][^2][^3]. It involves the techno-economic modeling of thermal energy storage and battery units towards flexible generation.
 
 <!-- Screenshots -->
 <!-- ### :camera: Screenshots
@@ -268,6 +251,6 @@ Mohammad Aljubran - [LinkedIn](https://www.linkedin.com/in/mohammad-aljubran) - 
 
 Correlations used in this model across both upstream and downstream components are based on GETEM and GEOPHIRES. -->
 
-[^1]: Beckers, K. F., & McCabe, K. (2019). GEOPHIRES v2. 0: updated geothermal techno-economic simulation tool. Geothermal Energy, 7, 1-28.
+[^1]: Aljubran, M. J., Volkov, O., & Horne, R. N. (2023). Techno-Economic Modeling and Optimization of Flexible Geothermal Operations Coupled with Energy Storage. 48th Stanford Geothermal Workshop.
 [^2]: Mines, G. L. (2016). GETEM User Manual. INL: Idaho Falls, ID, USA.
-
+[^3]: Beckers, K. F., & McCabe, K. (2019). GEOPHIRES v2. 0: updated geothermal techno-economic simulation tool. Geothermal Energy, 7, 1-28.
