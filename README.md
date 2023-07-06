@@ -261,7 +261,7 @@ Distributed under the MIT License. See LICENSE.txt for more information.
 <!-- Contact -->
 ## :handshake: Contact
 
-Mohammad Aljubran - [LinkedIn](https://www.linkedin.com/in/mohammad-aljubran) - aljubrmj@stanford.edu
+Mohammad Aljubran - [LinkedIn](https://www.linkedin.com/in/mohammad-aljubran) - [Scholar](https://scholar.google.com/citations?user=7-YoZS8AAAAJ&hl=en)- aljubrmj@stanford.edu; m.j.aljubran@gmail.com
 
 <!-- Acknowledgments -->
 <!-- ## :gem: Acknowledgements
