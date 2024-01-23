@@ -62,7 +62,7 @@ Maybe you can mention me or this repo in the acknowledgements too
   
 <!-- About the Project -->
 ## :star2: About the Project
-This work is based on <li><a href="[https://www.typescriptlang.org](https://doi.org/10.1016/j.apenergy.2023.122125)/">our article published in Applied Energy.</a></li> 
+This work is based on [a journal article published in Applied Energy]([https://colab.research.google.com/drive/1nHoqSLD8QRXfB_kHNa67VRN8kE4dkjmm?usp=sharing](https://doi.org/10.1016/j.apenergy.2023.122125)).
 This was developed in the Stanford Geothermal Program to serve as a tool for evaluating the techno-economics of flexible geothermal operations. It makes use of anlytical and iterative models alongside correlations develoepd in other works[^1][^2][^3]. It involves the techno-economic modeling of thermal energy storage and battery units towards flexible generation.
 
 <!-- Screenshots -->
