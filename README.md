@@ -251,6 +251,6 @@ Mohammad Aljubran - [LinkedIn](https://www.linkedin.com/in/mohammad-aljubran) - 
 
 Correlations used in this model across both upstream and downstream components are based on GETEM and GEOPHIRES. -->
 
-[^1]: Aljubran, M. J., Volkov, O., & Horne, R. N. (2023). Techno-Economic Modeling and Optimization of Flexible Geothermal Operations Coupled with Energy Storage. 48th Stanford Geothermal Workshop.
+[^1]: Aljubran, M. J., & Horne, R. N. (2024). FGEM: Flexible Geothermal Economics Modeling tool. Applied Energy, 353, 122125.
 [^2]: Mines, G. L. (2016). GETEM User Manual. INL: Idaho Falls, ID, USA.
 [^3]: Beckers, K. F., & McCabe, K. (2019). GEOPHIRES v2. 0: updated geothermal techno-economic simulation tool. Geothermal Energy, 7, 1-28.
