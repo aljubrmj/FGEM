@@ -5,7 +5,7 @@ Welcome to FGEM's documentation!
 
 .. image:: assets/flowchart.png
   :width: 400
-  :align: center
+  :align: right
 
 It pulls data from the `Open Food Facts database <https://world.openfoodfacts.org/>`_
 and offers a *simple* and *intuitive* API.
