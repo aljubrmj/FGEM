@@ -20,7 +20,18 @@ how to :ref:`installation` the project.
 Contents
 --------
 
-.. toctree::
+```{toctree}
+:caption: 'Usage:'
+:maxdepth: 1
+:hidden:
 
-   usage
-   api
+usage
+```
+
+```{toctree}
+:caption: 'API:'
+:maxdepth: 1
+:hidden:
+
+api
+```
