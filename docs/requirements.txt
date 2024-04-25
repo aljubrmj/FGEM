@@ -11,3 +11,11 @@ scipy==1.7.3
 seaborn==0.12.2
 Shapely==2.0.1
 tqdm==4.64.1
+
+
+# docs
+myst-parser
+pydata-sphinx-theme
+sphinx-book-theme
+sphinxcontrib-bibtex
+# docutils
