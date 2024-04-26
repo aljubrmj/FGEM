@@ -56,7 +56,7 @@ html_theme_options = {
 
 # The name of an image file (relative to this directory) to place at the top
 # of the sidebar.
-html_logo = "./_static/fgem-logo.png"
+html_logo = "./_static/fgem_logo.png"
 
 # -- Options for EPUB output
 # epub_show_urls = 'footnote'
