@@ -1,4 +1,4 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 from fgem import __version__
 
 setup(
@@ -20,7 +20,11 @@ setup(
                     "tqdm>=4.64.1",
                     "numpy-financial>=1.0.0",
                     "timezonefinder>=6.2.0",
-                    "meteostat>=1.6.5"],
+                    "meteostat>=1.6.5",
+                    "geopandas>=0.13.0"],
 
+    packages=find_packages(),
     py_modules=['fgem'],
+    # include_package_data=True,
+    # package_data={'': ['data/market/*']}
 )
