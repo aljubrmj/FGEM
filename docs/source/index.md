@@ -26,6 +26,7 @@ Upon the end of the simulated project lifetime, records are stored, economics ar
 :hidden:
 
 about-introduction
+about-installation
 ```
 
 ```{toctree}
@@ -37,9 +38,10 @@ usage
 ```
 
 ```{toctree}
-:caption: 'API:'
+:caption: 'References:'
 :maxdepth: 1
 :hidden:
 
-api
+reference_license.md
+reference_publications.md
 ```
