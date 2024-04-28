@@ -57,7 +57,57 @@ us_state_to_abbrev = {
     "United States Minor Outlying Islands": "UM",
     "U.S. Virgin Islands": "VI",
 }
-    
+
+WESTERN_STATE_NAMES = ["Arizona",
+"California",
+"Colorado",
+"Idaho",
+"Montana",
+"Nevada",
+"New Mexico",
+"Oregon",
+"Utah",
+"Washington",
+"Wyoming"]
+
+regions_to_states = {
+    'Southeast': ['West Virginia', 'District of Columbia', 'Maryland', 'Virginia',
+              'Kentucky', 'Tennessee', 'North Carolina', 'Mississippi',
+              'Arkansas', 'Louisiana', 'Alabama', 'Georgia', 'South Carolina',
+              'Florida', 'Delaware'],
+    'Southwest': ['Arizona', 'New Mexico', 'Oklahoma', 'Texas'],
+    'West': ['Washington', 'Oregon', 'California', 'Nevada', 'Idaho', 'Montana',
+             'Wyoming', 'Utah', 'Colorado', 'Alaska', 'Hawaii'],
+    'Midwest': ['North Dakota', 'South Dakota', 'Nebraska', 'Kansas', 'Minnesota',
+                'Iowa', 'Missouri', 'Wisconsin', 'Illinois', 'Michigan', 'Indiana',
+                'Ohio'],
+    'Northeast': ['Maine', 'Vermont', 'New York', 'New Hampshire', 'Massachusetts',
+                  'Rhode Island', 'Connecticut', 'New Jersey', 'Pennsylvania']
+}
+
+states_to_regions = {
+    'Washington': 'West', 'Oregon': 'West', 'California': 'West', 'Nevada': 'West',
+    'Idaho': 'West', 'Montana': 'West', 'Wyoming': 'West', 'Utah': 'West',
+    'Colorado': 'West', 'Alaska': 'West', 'Hawaii': 'West', 'Maine': 'Northeast',
+    'Vermont': 'Northeast', 'New York': 'Northeast', 'New Hampshire': 'Northeast',
+    'Massachusetts': 'Northeast', 'Rhode Island': 'Northeast', 'Connecticut': 'Northeast',
+    'New Jersey': 'Northeast', 'Pennsylvania': 'Northeast', 'North Dakota': 'Midwest',
+    'South Dakota': 'Midwest', 'Nebraska': 'Midwest', 'Kansas': 'Midwest',
+    'Minnesota': 'Midwest', 'Iowa': 'Midwest', 'Missouri': 'Midwest', 'Wisconsin': 'Midwest',
+    'Illinois': 'Midwest', 'Michigan': 'Midwest', 'Indiana': 'Midwest', 'Ohio': 'Midwest',
+    'West Virginia': 'Southeast', 'District of Columbia': 'Southeast', 'Maryland': 'Southeast',
+    'Virginia': 'Southeast', 'Kentucky': 'Southeast', 'Tennessee': 'Southeast', 'North Carolina': 'Southeast',
+    'Mississippi': 'Southeast', 'Arkansas': 'Southeast', 'Louisiana': 'Southeast', 'Alabama': 'Southeast',
+    'Georgia': 'Southeast', 'South Carolina': 'Southeast', 'Florida': 'Southeast', 'Delaware': 'Southeast',
+    'Arizona': 'Southwest', 'New Mexico': 'Southwest', 'Oklahoma': 'Southwest',
+    'Texas': 'Southwest'}
+
+UNIFIED_CRS = "EPSG:3857"
+LATLON_CRS = "EPSG:4326"
+
+US_LATMIN, US_LATMAX = 24.521208, 49.382808
+US_LONMIN, US_LONMAX = -124.736342, -66.945392
+
 SMALL_NUM = 1e-3
 SMALLER_NUM = 1e-6
 

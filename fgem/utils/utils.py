@@ -1,22 +1,38 @@
 import os
 import sys
+
+PROJECT_ROOT = os.path.abspath(os.path.join(
+                  os.path.dirname(__file__), 
+                  os.pardir)
+)
+sys.path.append(PROJECT_ROOT)
+
 import math
 import numpy as np
+import numpy_financial as npf
 import pandas as pd
-from datetime import timedelta
+from datetime import timedelta, datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
-from tqdm.notebook import tqdm
+from tqdm import tqdm
 import pdb 
 from pyXSteam.XSteam import XSteam
 from scipy.optimize import curve_fit
 import pickle
 from matplotlib.ticker import FormatStrFormatter
 from shapely.geometry.polygon import orient
+from shapely.geometry import Polygon
+from shapely.prepared import prep
+from fgem.utils.constants import *
+import geopandas as gpd
+from timezonefinder import TimezoneFinder
+from meteostat import Hourly, Stations
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from matplotlib.ticker import StrMethodFormatter
 
 steamTable = XSteam(XSteam.UNIT_SYSTEM_MKS) # m/kg/sec/°C/bar/W
 
-colors = 4*sns.color_palette()
+colors = 24*sns.color_palette()
 
 linestyles = {0: 'solid',
               1: 'dashed',
@@ -138,7 +154,8 @@ def plot_ex(worlds,
     for i, (title, present_per_unit) in enumerate(worlds.items()):
         ex = [v for _,v in present_per_unit.items() if v > 0]
         labels = [k for k,v in present_per_unit.items() if v > 0]
-        wedges, _, _ = axes[i].pie(x=ex, 
+        wedges, _, _ = axes[i].pie(x=ex,
+                                   pctdistance=0.8,
                                    labels=labels, 
                                    colors=colors, 
                                    autopct=lambda pct: func(pct, ex),
@@ -292,7 +309,7 @@ def check_conv(in_size, kernels, strides, pads):
         print(h)
     return h
 
-def plot_cols_v2(dfs, 
+def plot_cols_v2(dfs,
               span,
               quantities, 
               figsize=(10,10),
@@ -306,7 +323,8 @@ def plot_cols_v2(dfs,
               use_linestyles=True,
               blackout_first=False,
               formattime = False,
-              dpi=100):
+              dpi=100,
+              return_figax=False):
     
     """A more involved version of plotting columns of a dataframe (specifically made for time-series headers)."""
     
@@ -356,6 +374,8 @@ def plot_cols_v2(dfs,
     
     plt.show()
 
+    if return_figax:
+        return fig, axes
 def viz_wholesale(filepath, span=range(2025,2056,2)):
     
     """Visualize wholesale market data."""
@@ -377,18 +397,25 @@ def viz_wholesale(filepath, span=range(2025,2056,2)):
     
 def preprocess_cambium_capacity(scenario, state, infl,
                                 base_year=2023, span=range(2024,2061), 
-                                plot=False, dst_dir='.', save=None, adjustment=0):
+                                plot=False, dst_dir='.', save=None, adjustment=0,
+                                states_with_no_capacity_market = ["TX"]):
 
     """Preprocess and plot Cambium capacity market data for a chosen state and forecast scenario."""
     
     filepath = f"../../Cambium_2022/{scenario}/Cambium22_{scenario}_annual_state.csv"
     df = pd.read_csv(filepath, header=5)
-    df = df.loc[df.state == state, ["t", "capacity_shadow_price"]]
-    df = df.rename(columns={"t": "Year", "capacity_shadow_price": "capacity cost"})
-    df["capacity cost"] /= 1e3
+    df = df.loc[df.state == state, ["t", "capacity_cost_enduse"]]
+    df = df.rename(columns={"t": "Year", "capacity_cost_enduse": "capacity cost"})
+    df["capacity cost"] *= (8760/1e3) # to convert $/MWh to $/kW-yr
+    
+    if state in states_with_no_capacity_market:
+        df["capacity cost"] = 0.0
+        
     df_full = pd.merge(pd.DataFrame({"Year": span}), df, how='outer', on="Year").interpolate(method="linear", order=1)
+    
     if adjustment > 0:
         df_full["capacity cost"] += adjustment #based on Fig 3-C of https://eta-publications.lbl.gov/sites/default/files/berkeley_lab_2021.11-_integrating_cambium_prices_into_electric-sector_decisions.pdf
+    
     df_full["capacity cost"] = df_full["capacity cost"] * (1+infl)**(df_full.Year - base_year)
     if plot:
         # plt.scatter(df["Year"], df["capacity cost"], color="black")
@@ -534,16 +561,17 @@ def compute_f(Rewaterprod, well_diam):
     
     """Compute f3 constant to be used for determining Reynold's number."""
 
-    if Rewaterprod < 2300.:
-        f = 64./nonzero(Rewaterprod)
-    else:
-        relroughness = 1e-4/well_diam
-        f = 1./np.power(-2*np.log10(relroughness/3.7+5.74/np.power(Rewaterprod,0.9)),2.)
-        f = 1./np.power((-2*np.log10(relroughness/3.7+2.51/Rewaterprod/np.sqrt(f))),2.)
-        f = 1./np.power((-2*np.log10(relroughness/3.7+2.51/Rewaterprod/np.sqrt(f))),2.)
-        f = 1./np.power((-2*np.log10(relroughness/3.7+2.51/Rewaterprod/np.sqrt(f))),2.)
-        f = 1./np.power((-2*np.log10(relroughness/3.7+2.51/Rewaterprod/np.sqrt(f))),2.)
-        f = 1./np.power((-2*np.log10(relroughness/3.7+2.51/Rewaterprod/np.sqrt(f))),2.) #6 iterations to converge
+    relroughness = 1e-4/well_diam
+    f = 1./np.power(-2*np.log10(relroughness/3.7+5.74/np.power(Rewaterprod,0.9)),2.)
+    f = 1./np.power((-2*np.log10(relroughness/3.7+2.51/Rewaterprod/np.sqrt(f))),2.)
+    f = 1./np.power((-2*np.log10(relroughness/3.7+2.51/Rewaterprod/np.sqrt(f))),2.)
+    f = 1./np.power((-2*np.log10(relroughness/3.7+2.51/Rewaterprod/np.sqrt(f))),2.)
+    f = 1./np.power((-2*np.log10(relroughness/3.7+2.51/Rewaterprod/np.sqrt(f))),2.)
+    f = 1./np.power((-2*np.log10(relroughness/3.7+2.51/Rewaterprod/np.sqrt(f))),2.) #6 iterations to converge
+    
+    # if laminar
+    f = np.where(Rewaterprod < 2300., 64./nonzero(Rewaterprod), f)
+    
     return f
 
 # def compute_f1(Rewaterinj, well_diam):
@@ -600,35 +628,35 @@ def vaporpressurewater(Twater):
     
     """Correlation for water vapor pressure based on the GEOPHIRES tool."""
     
-    if Twater < 100:
-        A = 8.07131
-        B = 1730.63
-        C = 233.426
-    else:
-        A = 8.14019
-        B = 1810.94
-        C = 244.485 
-    vaporpressurewater = 133.322*(10**(A-B/(C+Twater)))/1000 #water vapor pressure in kPa using Antione Equation
-    return vaporpressurewater
+    return np.where(Twater < 100, 133.322*(10**(8.07131-1730.63/(233.426+Twater)))/1000, 
+         133.322*(10**(8.14019-1810.94/(244.485 +Twater)))/1000)
     
 
-def compute_npv(df_records, capex_total, opex_total, baseline_year, L, d, ppa_price=75):
+def compute_npv(df_records, capex_total, opex_total, baseline_year, L, d, ppa_price=75, ppa_escalaction_rate=0.02):
     
     """Compute NPV and other economic metrics for a completed simulation run."""
     
     years = np.arange(L)
-    df_records["PPA Revenue [$MM]"] = df_records["Net Power Generation [MWhe]"]*ppa_price/1e6
-    df_annual = df_records.groupby('Year').sum(numeric_only=True)
-    df_annual["CAPEX [$MM]"] = capex_total
-    df_annual["OPEX [$MM]"] = opex_total
+    df_annual_nominal = df_records.groupby('Year').sum(numeric_only=True)
 
-    df_annual["Cashin [$MM]"] = df_annual["Revenue [$MM]"]
-    df_annual["PPA Cashin [$MM]"] = df_annual["PPA Revenue [$MM]"]
-    df_annual["Cashout [$MM]"] = df_annual["OPEX [$MM]"] + df_annual["CAPEX [$MM]"]
-    df_annual["Cashflow [$MM]"] = df_annual["Cashin [$MM]"] - df_annual["Cashout [$MM]"]
-    df_annual["PPA Cashflow [$MM]"] = df_annual["PPA Cashin [$MM]"] - df_annual["Cashout [$MM]"]
-    
-    df_annual = df_annual.div((1 + d)**years, axis=0)
+    # This ensures that we captured all columns
+    df_annual_nominal = pd.merge(df_annual_nominal,
+            pd.DataFrame(min(df_annual_nominal.index) + np.arange(L), columns=["Year"]).set_index("Year"),
+            left_index=True, right_index=True,
+            how="outer").fillna(0)
+
+    df_annual_nominal["PPA Revenue [$MM]"] = df_annual_nominal["Net Power Generation [MWhe]"]\
+        *ppa_price/1e6 * (1 + ppa_escalaction_rate)**years
+    df_annual_nominal["CAPEX [$MM]"] = capex_total
+    df_annual_nominal["OPEX [$MM]"] = opex_total
+
+    df_annual_nominal["Cashin [$MM]"] = df_annual_nominal["Revenue [$MM]"]
+    df_annual_nominal["PPA Cashin [$MM]"] = df_annual_nominal["PPA Revenue [$MM]"]
+    df_annual_nominal["Cashout [$MM]"] = df_annual_nominal["OPEX [$MM]"] + df_annual_nominal["CAPEX [$MM]"]
+    df_annual_nominal["Cashflow [$MM]"] = df_annual_nominal["Cashin [$MM]"] - df_annual_nominal["Cashout [$MM]"]
+    df_annual_nominal["PPA Cashflow [$MM]"] = df_annual_nominal["PPA Cashin [$MM]"] - df_annual_nominal["Cashout [$MM]"]
+
+    df_annual = df_annual_nominal.div((1 + d)**years, axis=0)
     df_annual["NPV [$MM]"] = df_annual["Cashflow [$MM]"].cumsum()
     df_annual["PPA NPV [$MM]"] = df_annual["PPA Cashflow [$MM]"].cumsum()
     df_annual["Revenue [$MM]"] = df_annual["Cashin [$MM]"].cumsum()
@@ -641,24 +669,43 @@ def compute_npv(df_records, capex_total, opex_total, baseline_year, L, d, ppa_pr
     df_annual['WH Temp [deg C]'] = df_records.groupby('Year').mean(numeric_only=True)["WH Temp [deg C]"]
     NPV = df_annual["NPV [$MM]"].iloc[-1]
     ROI = df_annual["ROI [%]"].iloc[-1]
-    PBP = df_annual.index[np.argmax((df_annual["ROI [%]"]>0).values)] - baseline_year
+    PBP = df_annual_nominal.index[np.argmax((df_annual_nominal["Cashflow [$MM]"].cumsum()>0).values)] - baseline_year
+    IRR = npf.irr(df_annual_nominal["Cashflow [$MM]"].values) * 100
     PPA_NPV = df_annual["PPA NPV [$MM]"].iloc[-1]
     PPA_ROI = df_annual["PPA ROI [%]"].iloc[-1]
-    PPA_PBP = df_annual.index[np.argmax((df_annual["PPA ROI [%]"]>0).values)] - baseline_year
-    LCOE = df_annual["Cashout [$MM]"].sum()*1e6/nonzero(df_annual["Net Power Generation [MWhe]"].sum(), 1E-1)
+    PPA_PBP = df_annual_nominal.index[np.argmax((df_annual_nominal["PPA Cashflow [$MM]"].cumsum()>0).values)] - baseline_year
+    PPA_IRR = npf.irr(df_annual_nominal["PPA Cashflow [$MM]"].values) * 100
+    NET_GEN = df_annual["Net Power Generation [MWhe]"].sum()
+    LCOE = df_annual["Cashout [$MM]"].sum()*1e6/nonzero(NET_GEN, 1E-1)
     if LCOE < 0: # cases where pumping requirements are greater than gross power generation
         LCOE = 999
-    return NPV, ROI, PBP, PPA_NPV, PPA_ROI, PPA_PBP, LCOE, df_annual
+    return NPV, ROI, PBP, IRR, PPA_NPV, PPA_ROI, PPA_PBP, PPA_IRR, LCOE, NET_GEN, df_annual
 
-def compute_drilling_cost(well_depth, well_diam):
+def compute_drilling_cost(well_tvd, well_diam, lateral_length=0, numberoflaterals=1,
+                          total_drilling_length=None, usd_per_meter=None):
     
     """Correlations for computing drilling costs."""
-    
-    # Divide by 1.15 to remove th 15% contiengency already included by SNL (ref: GETEM page 85)
+    well_md = well_tvd + lateral_length * numberoflaterals
+
+    if total_drilling_length:
+        if not usd_per_meter:
+            raise ValueError('You must specify drilling usd_per_meter for the provided system design.')
+        else:
+            return total_drilling_length * usd_per_meter / 1e6
+
+    if usd_per_meter:
+        return well_md * usd_per_meter / 1e6
+    # Divide by 1.15 to remove the 15% contiengency already included by SNL (ref: GETEM page 85)
     if well_diam > 0.3: # units in meters
-        return (0.2818*well_depth**2 + 1275.5213*well_depth + 632315.)*1e-6/1.15
+        if lateral_length>0:
+            return (0.2553*well_md**2 + 1716.7157*well_md + 500867.)*1e-6/1.15
+        else:
+            return (0.2818*well_tvd**2 + 1275.5213*well_tvd + 632315.)*1e-6/1.15
     else:
-        return (0.3021*well_depth**2 + 584.9112*well_depth + 751368.)*1e-6/1.15
+        if lateral_length>0:
+            return (0.2898*well_md**2 + 822.1507*well_md + 680563.)*1e-6/1.15
+        else:
+            return (0.3021*well_tvd**2 + 584.9112*well_tvd + 751368.)*1e-6/1.15
 
 def compute_latlon_distance(lat1, lon1, lat2, lon2):
     
@@ -698,11 +745,11 @@ def gpd_geographic_area(geodf):
         # orient to ensure a counter-clockwise traversal. 
         # See https://pyproj4.github.io/pyproj/stable/api/geod.html
         # geometry_area_perimeter returns (area, perimeter)
-        return geod.geometry_area_perimeter(orient(geom, 1))[0]
+        return geod.geometry_area_perimeter(orient(geom, 1))[0] #m2
     
     return geodf.geometry.apply(area_calc)
 
-def latlon_tres_to_depth(df_maps, query_lat, query_lon, tres, MJth_per_km3=5.1e9, eta=0.1, L=25):
+def latlon_tres_to_depth(df_maps, query_northing, query_easting, tres, MJth_per_km3=5.1e9, thickness=500, eta=0.1, L=25):
     
     """Get depth required to reach a target temperature at a latlon location."""
     
@@ -711,12 +758,13 @@ def latlon_tres_to_depth(df_maps, query_lat, query_lon, tres, MJth_per_km3=5.1e9
     temps = []
     for depth in all_depths:
         df_temp = df_maps[depth]
-        row = df_temp.iloc[[(np.sqrt((query_lat - df_temp["centroid_lat"])**2 + (query_lon - df_temp["centroid_lon"])**2)).argmin()]]
+        row = df_temp.iloc[[(np.sqrt((query_northing - df_temp["Northing"]).abs() + (query_easting - df_temp["Easting"]).abs())).argmin()]]
         temp = row["T"].values[0]
         temps.append(temp)
         if temp >= tres:
             depths = all_depths[:len(temps)]
             break
+
     temps = np.array(sorted(temps))
     surface_temp = temps[0]
     geothermal_gradient = np.mean(np.clip(np.diff(temps[[0,-1]]) / (np.diff(depths[[0,-1]])/1000), 0.0, np.inf))
@@ -725,20 +773,191 @@ def latlon_tres_to_depth(df_maps, query_lat, query_lon, tres, MJth_per_km3=5.1e9
         print("Non-Positive Geothermal Gradient ... !!!")
 
     if tres > max(temps):
-        z = np.polyfit(temps, all_depths, 1)
+        z = np.polyfit(temps, depths, 1)
         p = np.poly1d(z)
         well_depth = p(tres)
     else:
         well_depth = np.interp(tres, temps, depths)
-    
-    area = gpd_geographic_area(row).values[0]/1e6
-    electric_energy_MJe = MJth_per_km3 * area * eta
+
+    A_r = gpd_geographic_area(row).values[0]/1e6 #km2
+    V_r = A_r * thickness/1000 # km3
+    electric_energy_MJe = MJth_per_km3 * V_r * eta
     electric_power_MWe = electric_energy_MJe/(L*365*24*3600)
     
-    return well_depth, surface_temp, geothermal_gradient, electric_power_MWe
+    return well_depth, surface_temp, geothermal_gradient, electric_power_MWe, A_r, V_r
+
+def latlon_depth_to_tres(df_maps, query_northing, query_easting, well_depth, MJth_per_km3=5.1e9, thickness=1000, eta=0.1, L=25):
+    
+    """Get depth required to reach a target temperature at a latlon location."""
+    
+    all_depths = np.sort(list(df_maps.keys()))
+    ref_depth = all_depths[np.argmin(np.abs(np.array(list(df_maps.keys())) - well_depth))]
+    df_temp = df_maps[ref_depth]
+    ref_row = df_temp.iloc[[(np.sqrt((query_northing - df_temp["Northing"]).abs() + (query_easting - df_temp["Easting"]).abs())).argmin()]]
+    
+    depths = all_depths[all_depths <= well_depth]
+    temps = []
+    for depth in depths:
+        df_temp = df_maps[depth]
+        row = df_temp.iloc[[(np.sqrt((query_northing - df_temp["Northing"]).abs() + (query_easting - df_temp["Easting"]).abs())).argmin()]]
+        temp = row["T"].values[0]
+        temps.append(temp)
+    
+    temps = np.array(sorted(temps))
+    surface_temp = temps[0]
+    geothermal_gradient = np.mean(np.clip(np.diff(temps[[0,-1]]) / (np.diff(depths[[0,-1]])/1000), 0.0, np.inf))
+    if geothermal_gradient <= 0.0:
+        print(temps, depths, tres, temp)
+        print("Non-Positive Geothermal Gradient ... !!!")
+        
+    z = np.polyfit(depths[-2:], temps[-2:], 1)
+    p = np.poly1d(z)
+    tres = p(well_depth)
+
+    A_r = gpd_geographic_area(ref_row).values[0]/1e6 #km2
+    V_r = A_r * thickness/1000 # km3
+    electric_energy_MJe = MJth_per_km3 * V_r * eta
+    electric_power_MWe = electric_energy_MJe/(L*365*24*3600)
+
+    
+    return tres, surface_temp, geothermal_gradient, electric_power_MWe, A_r, V_r
+
+def augustine_MWeperkm3(tres):
+    """Based on page22 of Augustine (2011): https://www.nrel.gov/docs/fy12osti/47459.pdf"""
+    if tres <= 200:
+        return 0.59
+    elif tres <= 250:
+        return 0.76
+    elif tres <= 300:
+        return 0.86
+    elif tres <= 350:
+        return 0.97
+    else:
+        return 1.19
+    
+def augustine_eff(tres):
+    """Based on page22 of Augustine (2011): https://www.nrel.gov/docs/fy12osti/47459.pdf"""
+    if tres <= 200:
+        return 0.11
+    elif tres <= 250:
+        return 0.14
+    elif tres <= 300:
+        return 0.16
+    elif tres <= 350:
+        return 0.18
+    else:
+        return 0.22
 
 def nonzero(x, thresh=1E-6):
     return np.maximum(thresh, x)
 
+def grid_bounds(geom, delta):
+    minx, miny, maxx, maxy = geom.bounds
+    nx = int((maxx - minx)/delta)
+    ny = int((maxy - miny)/delta)
+    gx, gy = np.linspace(minx,maxx,nx), np.linspace(miny,maxy,ny)
+    grid = []
+    for i in range(len(gx)-1):
+        for j in range(len(gy)-1):
+            poly_ij = Polygon([[gx[i],gy[j]],[gx[i],gy[j+1]],[gx[i+1],gy[j+1]],[gx[i+1],gy[j]]])
+            grid.append( poly_ij )
+    return grid
+
+def partition(geom, delta):
+    prepared_geom = prep(geom)
+    grid = list(filter(prepared_geom.intersects, grid_bounds(geom, delta)))
+    return grid
+
+def clean_bht(df, source):
+    df_temp = df.copy()
+    df_temp = df_temp[(df_temp.lat<US_LATMAX)&(df_temp.lat>US_LATMIN)&(df_temp.lon<US_LONMAX)&(df_temp.lon>US_LONMIN)]
+    df_temp.reset_index(drop=True, inplace=True)
+    df_temp["Source"] = source
+    df_temp = df_temp[df_temp.state.apply(lambda x: x is not None)].reset_index(drop=True)
+    df_temp["geometry"] = gpd.points_from_xy(df_temp.lon, df_temp.lat)
+    df_temp = gpd.GeoDataFrame(df_temp, geometry='geometry', crs="4326")
+    df_temp = df_temp.to_crs(crs=UNIFIED_CRS)
+
+    return df_temp
+
+def plot_hist(df_temp, cols=["Depth", "BHT"], color="g"):
+    axes = df_temp.hist(cols, color=color, figsize=(15,4), sharey=True);
+    for ax in axes.squeeze():
+        ax.set_ylabel("Count", fontsize=12)
+        
+def harrison(z):
+    return -2.3449e-6 * z**2 + 0.018268 * z - 16.512
+
+def forster(z):
+    return 0.017*z - 6.58
+
+def retrieve_weather(lat, lon, year, station_idx_limit=10):
+    # Set time period
+    findtz = TimezoneFinder()
+    findstations = Stations()
+    start = datetime(year, 1, 1)
+    end = datetime(year, 12, 31, 23, 59)
+
+    data = []
+    station_idx = 0
+    stations = findstations.nearby(lat, lon).fetch(station_idx_limit+1)
+
+    while len(data) != 8760:
+        station = stations.iloc[[station_idx]]
+        data = Hourly(station, start-timedelta(days=2), end+timedelta(days=2)) #get more days to account for timezone shifting
+        data = data.fetch()
+        data = data.bfill().ffill()
+        data.reset_index(inplace=True)
+        tz = findtz.timezone_at(lng=lon, lat=lat)
+        if len(data):
+            data["time"] = data.time.dt.tz_localize('utc').dt.tz_convert(tz).dt.tz_localize(None)
+            year_col = data.time.dt.year
+            data = data[year_col == year].reset_index(drop=True)
+
+        if station_idx >= station_idx_limit:
+            print(state, f"##### {len(data)} #####")
+            break
+        station_idx += 1
+    
+    return data
+
+def plot_map(df, feature, cmap="Spectral_r", vmax=None, vmin=None, categorical=False, markersize=1):
+    fig, ax = plt.subplots(1, 1, figsize=(20,20), dpi=100)
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="3%", pad=-0.25)
+    cax.set_title(feature, pad=10, fontsize=18)
+    cax.yaxis.set_major_formatter(StrMethodFormatter('{x:,.0f}'));
+    df.plot(feature, cmap=cmap, legend=True, markersize=markersize, ax=ax, cax=cax, vmax=vmax, vmin=vmin, categorical=categorical);
+    states.boundary.plot(ax=ax, color='black', edgecolor='black', alpha=1.0, linewidth=0.5);
+    
+    for l in cax.yaxis.get_ticklabels():
+        l.set_fontsize(14)
+
+    ax.tick_params(
+        axis='both', bottom=False, left=False,
+        labelbottom=False, labelleft=False)
+
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['bottom'].set_visible(False)
+    ax.spines['left'].set_visible(False);
+    return fig
+
+def constant_strategy(project, mass_flow=100):
+    """Constant change producer mass flow rates"""
+    m_prd = np.array(project.num_prd*[mass_flow]).astype(float)
+    m_inj = np.array(project.num_inj*[m_prd.sum()/project.num_inj]).astype(float)
+    return m_prd, m_inj
+
+def maximal_power_generation_strategy(project, max_mass_flow=200):
+    """Control wells to maintain a constant power plant output"""
+    power_output_MWh_kg = project.pp.power_output_MWh_kg# project.pp.compute_geofluid_consumption(project.reservoir.T_prd_wh.mean(), project.state.T0)
+    required_mass_flow_per_well = project.ppc / (power_output_MWh_kg * 3600 * project.num_prd + SMALL_NUM)
+
+    m_prd = np.minimum(max_mass_flow, np.array(project.num_prd*[required_mass_flow_per_well])).astype(float)
+    m_inj = np.array(project.num_inj*[m_prd.sum()/project.num_inj]).astype(float)
+
+    return m_prd, m_inj
+    
 if __name__ == "__main__":
     pass

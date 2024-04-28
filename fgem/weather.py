@@ -30,7 +30,8 @@ class Weather:
             self.resample = resample
             self.df = self.df.resample(rule=resample, on='Date').last()
 
-        self.df.set_index('Date', inplace=True)
+        else:
+            self.df.set_index('Date', inplace=True)
 
         if self.df.isna().sum().max() > 10:
             warnings.warn("WARNING: Too many missing weather data ... ")

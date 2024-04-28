@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 from pyXSteam.XSteam import XSteam
 import pickle
 from fgem.utils.utils import FastXsteam
+from datetime import timedelta, datetime
 
 steamTable = XSteam(XSteam.UNIT_SYSTEM_MKS)  # m/kg/sec/°C/bar/W
 from fgem.utils.utils import densitywater, viscositywater, heatcapacitywater
@@ -22,7 +23,8 @@ class LiIonBattery:
 				 duration=[4,4],
 				 power_capacity=[5,5],
 				 roundtrip_eff=0.90,
-				 lifetime=20):
+				 lifetime=20,
+				 timestep=timedelta(hours=1)):
 
 		"""Intiating attributes for LiIonBattery calss."""
 		
@@ -31,6 +33,7 @@ class LiIonBattery:
 		self.time_curr = time_init
 		self.duration_list = duration
 		self.power_capacity_list = power_capacity
+		self.timestep = timestep
 
 		self.duration = self.duration_list[0] # if self.power_capacity_list[0] > 0.0 else 0.0
 		self.power_capacity = self.power_capacity_list[0]# if self.duration_list[0] > 0.0 else 0.0
@@ -42,7 +45,6 @@ class LiIonBattery:
 		self.first_unit_active = True
 
 	def step(self,
-			 timestep,
 			 p_bat_in=0,
              p_bat_out=0
 			 ):
@@ -51,7 +53,7 @@ class LiIonBattery:
 
 		violation = False
   
-		self.time_curr += timestep
+		self.time_curr += self.timestep
 		# Install a new battery and block dis/charge
 		if self.first_unit_active and (self.time_curr.year - self.start_year) == self.lifetime:
 			self.duration = self.duration_list[1] # if self.power_capacity_list[1] > 0.0 else 0.0
@@ -63,12 +65,12 @@ class LiIonBattery:
 			return 0.0, 0.0
 
 		# Make sure you respect the available battery energy capacity and content when dis/charging
-		new_energy_content = self.energy_content + (p_bat_in - p_bat_out) * timestep.total_seconds()/3600
+		new_energy_content = self.energy_content + (p_bat_in - p_bat_out) * self.timestep.total_seconds()/3600
 		if (new_energy_content > self.energy_capacity) or (new_energy_content < 0):
 			p_bat_in, p_bat_out = 0.0, 0.0
 			violation = True
 
-		self.energy_content += (p_bat_in - p_bat_out) * timestep.total_seconds()/3600 # MWhe
+		self.energy_content += (p_bat_in - p_bat_out) * self.timestep.total_seconds()/3600 # MWhe
 		self.SOC = self.energy_content/ (self.energy_capacity+1e-3) * 100 #%
 		return violation
 		
@@ -86,10 +88,12 @@ class TES:
 				 Lst=0.08,
 				 Lins=0.05,
 				 Tamb=20,
-				 max_thresh=0.95):
+				 max_thresh=0.95,
+				 timestep=timedelta(hours=1)):
 
 		self.time_init = time_init
 		self.time_curr = time_init
+		self.timestep = timestep
 
 		self.fxsteam = pickle.load(open('FastXsteam.pkl', 'rb'))
 		self.d, self.H, self.Lst, self.Lins = d, H, Lst, Lins
@@ -100,7 +104,7 @@ class TES:
 
 		# Compute tank contents
 		self.initiate_tank_contents(Vw)
-
+		
 	def initiate_tank_dims(self):
 
 		"""Initiating volumetric and thermodynamic quantities in the storage tank."""
@@ -141,7 +145,6 @@ class TES:
 		self.massv = self.x * self.massw
 
 	def heatloss(self,
-				 timestep,
 				 kst=45,
 				 kins=0.17,
 				 h=13,
@@ -175,11 +178,11 @@ class TES:
 		heatLossSteel = 2*math.pi*self.H*kst * \
 			(Th-Tcold) / np.log(self.r_outer_st/self.r_inner_st) + \
 			self.Ast*kst*(Th-Tcold)/self.Lst
-		tempLossSteel = heatLossSteel*timestep / \
+		tempLossSteel = heatLossSteel*self.timestep.total_seconds() / \
 			(self.cpl*self.massl + self.cpv*self.massv)
 		Th = Th-tempLossSteel
 		self.Q = float(heatLossSteel)
-		self.HL = self.Q*timestep/1e3  # kJ #from both liquid/steam
+		self.HL = self.Q*self.timestep.total_seconds()/1e3  # kJ #from both liquid/steam
 		self.dT = float(tempLossSteel)
 		self.Tw = float(Th-273.15)
 
@@ -240,7 +243,6 @@ class TES:
 		return m_in, m_out
 
 	def step(self,
-			 timestep,
 			 T_amb,
 			 m_tes_in,
 			 m_tes_out,
@@ -249,10 +251,10 @@ class TES:
 
 		"""Stepping the thermal water tank over time."""
 
-		self.time_curr += timestep
+		self.time_curr += self.timestep
 		self.T_amb = T_amb
-		timestep_seconds = timestep.total_seconds()
-		self.heatloss(timestep_seconds)
+		timestep_seconds = self.timestep.total_seconds()
+		self.heatloss()
 		m_in, m_out = self.conservation(m_tes_in * timestep_seconds, m_tes_out * timestep_seconds, T_in)
 		m_tes_in, m_tes_out = m_in/timestep_seconds, m_out/timestep_seconds
 		return m_tes_in, m_tes_out

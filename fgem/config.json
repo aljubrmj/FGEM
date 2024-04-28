@@ -1,0 +1,75 @@
+{
+    "metadata": {
+        "base_dir": "/Users/mohammadaljubran/Desktop/phd/research/code",
+        "data_dir": "Data",
+        "time_init": "2025-01-01",
+        "market_dir": "CA_Cambium22_HighRECost_0_0_0.0",
+        "state": "CA"
+    },
+    "economics": {
+        "baseline_year": 2025,
+        "L": 25,
+        "d": 0.07,
+        "inflation": 0.02,
+        "opex_escalation": 0.0,
+        "powerplant_interconnection": 130,
+        "itc": 0.3,
+        "tank_capex_rate": 0.00143453,
+        "battery_costs_filename": "battery_costs.csv"
+    },
+    "market": {
+        "market_filename": "DA.csv",
+        "capacity_filename": "Capacity.csv",
+        "fat_factor": 1,
+        "resample": false
+    },
+    "weather": {
+        "weather_filename": "Weather.csv"
+    },
+    "downstream": {
+        "powerplant": {
+            "power_plant_type": "Binary",
+            "ppc": 50,
+            "pipinglength": 5,
+            "cf": 0.95,
+            "bypass": true
+        },
+        "battery": {
+            "battery_duration": [
+                0,
+                0
+            ],
+            "battery_power_capacity": [
+                0,
+                0
+            ],
+            "roundtrip_eff": 0.85,
+            "battery_lifetime": 15
+        },
+        "tank": {
+            "diameter": 0
+        }
+    },
+    "upstream": {
+        "reservoir_type": "percentage_decline",
+        "Tres_init": 225,
+        "Pres_init": 40,
+        "V_res": 30,
+        "phi_res": 0.1,
+        "drawdp": 0.005,
+        "plateau_length": 3,
+        "geothermal_gradient": 55,
+        "surface_temp": 15,
+        "well_depth": 3800.0,
+        "prd_well_diam": 0.31115,
+        "inj_well_diam": 0.31115,
+        "num_prd": 4,
+        "inj_prd_ratio": 0.5,
+        "waterloss": 0.05,
+        "pumpeff": 0.75,
+        "DSR": 0.9,
+        "SSR": 1.0,
+        "PI": 20,
+        "II": 20
+    }
+}

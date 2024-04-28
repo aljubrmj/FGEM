@@ -14,22 +14,32 @@ class TabularPowerMarket:
         """Initating attributes for the TabularPowerMarket class."""
         pass
 
-    def create_market(self,
-                    filepath,
-                    resample=False,
-                    fat_factor=1,
-                    fat_window=24,
-                    ):
+    def create_energy_market(self,
+                            filepath=None,
+                            energy_price=40,
+                            recs_price=30,
+                            L=30,
+                            time_init=pd.to_datetime('today'),
+                            resample=False,
+                            fat_factor=1,
+                            fat_window=24,
+                                ):
 
         """Loading and preprocessnig wholesale market data."""
         
-        self.df = pd.read_csv(filepath)
-        try:
-            self.df.Date = pd.to_datetime(self.df.Date, format="%m/%d/%y %H:%M")
-        except:
-            print("Slow formating of datetime while loading of wholesale market data ... ")
-            self.df.Date = pd.to_datetime(self.df.Date)
-            
+        if filepath:
+            self.df = pd.read_csv(filepath)
+            try:
+                self.df.Date = pd.to_datetime(self.df.Date, format="%m/%d/%y %H:%M")
+            except:
+                print("Slow formating of datetime while loading of wholesale market data ... ")
+                self.df.Date = pd.to_datetime(self.df.Date)
+        else:
+            self.df = time_init + pd.DataFrame(L * 8760 * [timedelta(hours=1)], columns=["Date"]).cumsum()
+            # self.df.set_index("Date", inplace=True)
+            self.df["price"] = energy_price
+            self.df["recs_price"] = 30
+        
         if resample:
             self.resample = resample
             self.df = self.df.resample(rule=resample, on='Date').mean() # I use the mean statistic here as it is reasonable and yields resmapling at hour zero
@@ -63,7 +73,26 @@ class TabularPowerMarket:
                     self.df["price_raw"][fat_window*i:fat_window*i+fat_window].mean()
         
             self.df["price"] = self.df["price_raw"] + fat_factor * (self.df["price_raw"] - price_means)
-    
+
+    def create_capacity_market(self,
+                                filepath=None,
+                                capacity_price=100,
+                                col="capacity cost",
+                                convert_to_usd_per_mwh=True):
+        
+        """Load and preprocess capacity market data."""
+
+        if filepath:
+            self.df_capacity = pd.read_csv(filepath)
+            if convert_to_usd_per_mwh:
+                self.df_capacity[col] = self.df_capacity[col] * 1e3 / 8760
+            self.capacity_dict = self.df_capacity.set_index("Year")[col].to_dict()
+            self.df["capacity_price"] = self.df["year"].apply(lambda t: self.get_capacity_price(t))
+        else:
+            self.df["capacity_price"] = capacity_price
+            if convert_to_usd_per_mwh:
+                self.df["capacity_price"] = self.df["capacity_price"] * 1e3 / 8760
+
     def get_market_price(self,
                          t,
                          col):
@@ -83,18 +112,6 @@ class TabularPowerMarket:
                      t):
         """Query renewable energy credits market data."""
         return self.get_market_price(col="recs_price")
-
-    def create_capacity_market(self,
-                                filepath,
-                                col="capacity cost",
-                                convert_to_usd_per_mwh=True):
-        
-        """Load and preprocess capacity market data."""
-
-        self.df_capacity = pd.read_csv(filepath)
-        if convert_to_usd_per_mwh:
-            self.df_capacity[col] = self.df_capacity[col] * 1e3 / 8760
-        self.capacity_dict = self.df_capacity.set_index("Year")[col].to_dict()
     
     def get_capacity_price(self,
                         year):
@@ -128,13 +145,22 @@ class TabularPowerMarket:
     #     self.popt, self.pcov = curve_fit(self.elcc_model, (X[:,0], X[:,1]), y)
 
     def create_elcc_forecast(self,
-                            filepath,
+                            filepath=None,
+                            battery_elcc = 1.0,
+                            battery_duration=None,
+                            battery_lifetime=None,
+                            start_year=None,
                             col="elcc"):
         
         """Load and preprocess effective load carrying capacity (ELCC) data for Li-ion batteries."""
         
-        self.df_elcc = pd.read_csv(filepath)
-        self.elcc_dict = self.df_elcc.set_index("Year")[col].to_dict()
+        if filepath and battery_duration:
+            self.df_elcc = pd.read_csv(filepath)
+            self.elcc_dict = self.df_elcc.set_index("Year")[col].to_dict()
+            self.df["battery_elcc"] = self.df["year"].apply(lambda t: self.get_elcc(t, battery_duration[int(t-start_year > battery_lifetime)]))
+        
+        else:
+            self.df["battery_elcc"] = battery_elcc
 
     def get_elcc(self,
                 year,

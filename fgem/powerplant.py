@@ -1,67 +1,81 @@
 import numpy as np
 import pdb 
-import math 
-
+import math
+import os
 from fgem.utils.utils import heatcapacitywater
+import pickle
+from datetime import timedelta, datetime
+
+FILE_BASE_DIR = os.path.dirname(__file__)
 
 class BasePowerPlant(object):
     
     """Base class for defining a power plant."""
     
-    def __init__(self, ppc, Tres, cf):
+    def __init__(self, ppc, Tres, cf,
+                 timestep=timedelta(hours=1)):
         """Define attributes for the BasePowerPlant class."""
         self.ppc = ppc
         self.cf = cf
+
+        #default starting point
+        self.power_output_MWh_kg = 1e-5
+        self.power_output_MWe = ppc
+        self.power_generation_MWh = ppc * 1
         self.T_mix = Tres
+        self.T_inj = Tres/2
+        self.timestep = timestep
 
     def extend_ppc(self, added_ppc):
         """Increase power plant capacity."""
         self.ppc += added_ppc
 
-    def compute_power_output(self, T, T0):
+    def compute_geofluid_consumption(self, T, T_amb):
         raise NotImplementedError
     
-    def compute_injection_temp(self, T, T0):
+    def compute_injection_temp(self, T, T_amb):
         raise NotImplementedError
 
     def compute_cplant(self, MaxProducedTemperature):
         raise NotImplementedError
 
-    def compute_thermalexergy(self, T, T0):
+    def compute_thermalexergy(self, T, T_amb):
         
         """Compute power plant thermal exergy for an inflowing geofluid at a given ambient temperature."""
         
         A = 4.041650
         B = -1.204E-2
         C = 1.60500E-5
-        T0_k = T0 + 273.15 #deg K
+        T_amb_k = T_amb + 273.15 #deg K
         T_k = T + 273.15 #deg K
-        thermal_exergy = ((A-B*T0_k)*(T_k-T0_k)+(B-C*T0_k)/2.0*(T_k**2-T0_k**2)+C/3.0*(T_k**3-T0_k**3)-A*T0_k*np.log(T_k/T0_k))*2.2046/947.83 #MJ/kg
+        thermal_exergy = ((A-B*T_amb_k)*(T_k-T_amb_k)+(B-C*T_amb_k)/2.0*(T_k**2-T_amb_k**2)+C/3.0*(T_k**3-T_amb_k**3)-A*T_amb_k*np.log(T_k/T_amb_k))*2.2046/947.83 #MJ/kg
         return thermal_exergy
     
-    def power_plant_outputs(self,
-                            timestep,
-                            m_turbine,
-                            m_wh_to_turbine,
-                            m_tes_out,
-                            T_wh,
-                            T_tes_out,
-                            T0):
+    def compute_power_output(self, m_turbine):
+        return self.cf * min(self.ppc, self.power_output_MWh_kg * (m_turbine * 3600))
+    
+    def step(self,
+            m_turbine,
+            T_prd_wh,
+            T_amb,
+            m_tes_out=0,
+            T_tes_out=100,):
         
         """Get power plant outputs for a timestep."""
-
+                
         # If we are using all geofluid to charge the tank, then there is no output
         if m_turbine == 0:
-            self.T_inj = self.compute_injection_temp(self.T_mix, T0)
+            self.T_inj = self.compute_injection_temp(self.T_mix, T_amb)
             return 0.0, 0.0, 0.0, 0.0, self.T_inj
         else:
-            self.T_mix = (m_wh_to_turbine*heatcapacitywater(T_wh)*T_wh + m_tes_out*heatcapacitywater(T_tes_out)*T_tes_out)/(m_wh_to_turbine*heatcapacitywater(T_wh)+m_tes_out*heatcapacitywater(T_tes_out)+1e-3)
-            power_output_MWh_kg = self.compute_power_output(self.T_mix, T0)
-            power_output_MWe = self.cf * min(self.ppc, power_output_MWh_kg * (m_turbine * 3600))
-            power_generation_MWh = power_output_MWe * (timestep.total_seconds()/3600)
-            self.T_inj = self.compute_injection_temp(self.T_mix, T0)
+            m_wh_to_turbine = m_turbine - m_tes_out
+            self.T_mix = (m_wh_to_turbine*heatcapacitywater(T_prd_wh)*T_prd_wh + m_tes_out*heatcapacitywater(T_tes_out)*T_tes_out)/(m_wh_to_turbine*heatcapacitywater(T_prd_wh)+m_tes_out*heatcapacitywater(T_tes_out)+1e-3)
+            self.power_output_MWh_kg = self.compute_geofluid_consumption(self.T_mix, T_amb)
+            self.power_output_MWe = self.compute_power_output(m_turbine)
+            self.power_generation_MWh = self.power_output_MWe * (self.timestep.total_seconds()/3600)
+            self.T_inj = self.compute_injection_temp(self.T_mix, T_amb)
 
-        return power_output_MWh_kg, power_output_MWe, power_generation_MWh, self.T_mix, self.T_inj
+        # return self.power_output_MWh_kg, self.power_output_MWe, self.power_generation_MWh, self.T_mix, self.T_inj
     
 class ORCPowerPlant(BasePowerPlant):
     
@@ -70,7 +84,7 @@ class ORCPowerPlant(BasePowerPlant):
     def __init__(self, ppc, Tres, cf=1.0):
         """Define attributes for the ORCPowerPlant class."""
         super(ORCPowerPlant, self).__init__(ppc, Tres, cf)
-    
+
     def compute_cplant(self, MaxProducedTemperature):
         """Compute cost of an ORC binary power plant."""
         if (MaxProducedTemperature < 150.):
@@ -84,43 +98,45 @@ class ORCPowerPlant(BasePowerPlant):
         Cplantcorrelation = CCAPP1*math.pow(self.ppc/15.,-0.06) * 1e-6 * self.ppc * 1e3 #$MM
         return Cplantcorrelation
     
-    def compute_power_output(self, T, T0):
+    def compute_geofluid_consumption(self, T, T_amb):
         """Compute the power output in MWh electricity per kg geofluid of an ORC binary power plant."""
-        thermal_exergy = self.compute_thermalexergy(T, T0)
-        if (T0 < 15.):
+        
+        thermal_exergy = self.compute_thermalexergy(T, T_amb)
+        if (T_amb < 15.):
             C1 = 2.746E-3
             C0 = -8.3806E-2
             D1 = 2.713E-3
             D0 = -9.1841E-2
-            Tfraction = (T0-5.)/10.
+            Tfraction = (T_amb-5.)/10.
         else:
             C1 = 2.713E-3
             C0 = -9.1841E-2
             D1 = 2.676E-3
             D0 = -1.012E-1
-            Tfraction = (T0-15.)/10.
+            Tfraction = (T_amb-15.)/10.
         etaull = C1*T + C0
         etauul = D1*T + D0
         etau = (1-Tfraction)*etaull + Tfraction*etauul
         
-        power_output = max(thermal_exergy*etau/3600, 0.0) #MWh/kg
+        power_output_MWh_kg = max(thermal_exergy*etau/3600, 0.0) #MWh/kg
+        
+        return power_output_MWh_kg #MWh/kg
     
-        return power_output #MWh/kg
-    
-    def compute_injection_temp(self, T, T0):
+    def compute_injection_temp(self, T, T_amb):
         """Compute the exiting (reinjection) water temperature of an ORC binary power plant."""
-        if (T0 < 15.):
+        
+        if (T_amb < 15.):
             C1 = 0.0894
             C0 = 55.6
             D1 = 0.0894
             D0 = 62.6
-            Tfraction = (T0-5.)/10.
+            Tfraction = (T_amb-5.)/10.
         else:
             C1 = 0.0894
             C0 = 62.6
             D1 = 0.0894
             D0 = 69.6
-            Tfraction = (T0-15.)/10.
+            Tfraction = (T_amb-15.)/10.
         reinjtll = C1*T + C0
         reinjtul = D1*T + D0
         Tinj = max((1.-Tfraction)*reinjtll + Tfraction*reinjtul, 0.0) #deg C
@@ -132,7 +148,7 @@ class FlashPowerPlant(BasePowerPlant):
     def __init__(self, ppc, Tres, cf=1.0):
         """Define attributes for the FlashPowerPlant class."""
         super(FlashPowerPlant, self).__init__(ppc, Tres, cf)
-    
+        
     def compute_cplant(self, MaxProducedTemperature):
         """Compute cost of a single flash binary power plant."""
         if self.ppc < 10:
@@ -188,17 +204,18 @@ class FlashPowerPlant(BasePowerPlant):
     
         return Cplantcorrelation
     
-    def compute_power_output(self, T, T0):
+    def compute_geofluid_consumption(self, T, T_amb):
         """Compute the power output in MWh electricity per kg geofluid of a single flash binary power plant."""
-        thermal_exergy = self.compute_thermalexergy(T, T0)
-        if (T0 < 15.):
+
+        thermal_exergy = self.compute_thermalexergy(T, T_amb)
+        if (T_amb < 15.):
             C2 = -4.27318E-7
             C1 = 8.65629E-4
             C0 = 1.78931E-1
             D2 = -5.85412E-7
             D1 = 9.68352E-4
             D0 = 1.58056E-1
-            Tfraction = (T0-5.)/10.
+            Tfraction = (T_amb-5.)/10.
         else:
             C2 = -5.85412E-7
             C1 = 9.68352E-4
@@ -206,25 +223,26 @@ class FlashPowerPlant(BasePowerPlant):
             D2 = -7.78996E-7
             D1 = 1.09230E-3
             D0 = 1.33708E-1
-            Tfraction = (T0-15.)/10.
+            Tfraction = (T_amb-15.)/10.
         etaull = C2*T**2 + C1*T + C0
         etauul = D2*T**2 + D1*T + D0
         etau = (1.-Tfraction)*etaull + Tfraction*etauul
         
-        power_output = max(thermal_exergy*etau/3600, 0.0) #MWh/kg
+        power_output_MWh_kg = max(thermal_exergy*etau/3600, 0.0) #MWh/kg
     
-        return power_output #MWh/kg
+        return power_output_MWh_kg #MWh/kg
     
-    def compute_injection_temp(self, T, T0):
+    def compute_injection_temp(self, T, T_amb):
         """Compute the exiting (reinjection) water temperature of a single flash power plant."""
-        if (T0 < 15.):
+        
+        if (T_amb < 15.):
             C2 = -1.11519E-3
             C1 = 7.79126E-1
             C0 = -10.2242
             D2 = -1.10232E-3
             D1 = 7.83893E-1
             D0 = -5.17039
-            Tfraction = (T0-5.)/10.
+            Tfraction = (T_amb-5.)/10.
         else:
             C2 = -1.10232E-3
             C1 = 7.83893E-1
@@ -232,7 +250,7 @@ class FlashPowerPlant(BasePowerPlant):
             D2 = -1.08914E-3
             D1 = 7.88562E-1
             D0 = -1.89707E-1
-            Tfraction = (T0-15.)/10.
+            Tfraction = (T_amb-15.)/10.
         reinjtll = C2*T**2 + C1*T + C0
         reinjtul = D2*T**2 + D1*T + D0
         Tinj = max((1.-Tfraction)*reinjtll + Tfraction*reinjtul, 0.0)
