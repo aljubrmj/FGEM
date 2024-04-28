@@ -1,8 +1,12 @@
 [build-system]
-requires = ["flit_core >=3.2,<4", "setuptools>=58", "wheel"]
-build-backend = "flit_core.buildapi"
+requires = [
+  "setuptools>=58",
+  "wheel",
+]
 
-[project]
-name = "fgem"
-authors = [{name = "Mohammad Aljubran", email = "aljubrmj@stanford.edu"}]
-dynamic = ["version", "description"]
+[tool.black]
+line-length = 120
+
+[tool.isort]
+line_length = 120
+profile = "black"
