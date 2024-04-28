@@ -1,7 +1,7 @@
 # FGEM
 
 ```{warning}
-**FGEM is under active development. For more information, please reach out to aljubrmj@stanford.edu for support**
+**FGEM is under active development. For more information, please reach out to [aljubrmj@stanford.edu](mailto:aljubrmj@stanford.edu) for support**
 ```
 
 **FGEM** (/if'gem/) is an open-source Python library for evaluating lifecycle techno-economics of baseload and flexible geothermal energy projects. 
