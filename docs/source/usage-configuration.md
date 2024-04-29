@@ -7,6 +7,6 @@ The FGEM workflow requires the user to input a configuration file to describe th
 ```{eval-rst}
 .. csv-table::
    :header-rows: 1
-   :widths: 22,7,22,33
+   :widths: 22,10,10,33,10
    :file: _static/metadata.csv
 ```
