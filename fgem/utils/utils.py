@@ -630,19 +630,19 @@ def compute_npv(df_records, capex_total, opex_total, baseline_year, L, d, ppa_pr
     return NPV, ROI, PBP, IRR, PPA_NPV, PPA_ROI, PPA_PBP, PPA_IRR, LCOE, NET_GEN, df_annual
 
 def compute_drilling_cost(well_tvd, well_diam, lateral_length=0, numberoflaterals=1,
-                          total_drilling_length=None, usd_per_meter=None):
+                          total_drilling_length=None, drilling_cost=None):
     
     """Correlations for computing drilling costs."""
     well_md = well_tvd + lateral_length * numberoflaterals
 
     if total_drilling_length:
-        if not usd_per_meter:
-            raise ValueError('You must specify drilling usd_per_meter for the provided system design.')
+        if not drilling_cost:
+            raise ValueError('You must specify drilling drilling_cost for the provided system design.')
         else:
-            return total_drilling_length * usd_per_meter / 1e6
+            return total_drilling_length * drilling_cost / 1e6
 
-    if usd_per_meter:
-        return well_md * usd_per_meter / 1e6
+    if drilling_cost:
+        return well_md * drilling_cost / 1e6
     # Divide by 1.15 to remove the 15% contiengency already included by SNL (ref: GETEM page 85)
     if well_diam > 0.3: # units in meters
         if lateral_length>0:

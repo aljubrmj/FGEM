@@ -12,9 +12,9 @@
         "d": 0.07,
         "inflation": 0.02,
         "opex_escalation": 0.0,
-        "powerplant_interconnection": 130,
+        "powerplant_interconnection_cost": 130,
         "itc": 0.3,
-        "tank_capex_rate": 0.00143453,
+        "tank_cost": 0.00143453,
         "battery_costs_filename": "battery.csv"
     },
     "market": {
@@ -43,7 +43,7 @@
                 0,
                 0
             ],
-            "roundtrip_eff": 0.85,
+            "battery_roundtrip_eff": 0.85,
             "battery_lifetime": 15
         },
         "tank": {

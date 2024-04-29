@@ -1,0 +1,6 @@
+,Unit,Values,Description,Default
+time_init,,str,project start date,"""2025-01-01"""
+L,years,int,project lifetime,30
+d,,float,nominal discount rate,0.07
+inflation,,float,inflation rate,0.02
+itc,,float,"investment tax credit, which is assumed to be recovered from the total project capital expenditure.",0.3

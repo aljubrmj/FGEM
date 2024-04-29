@@ -1,7 +1,7 @@
 {
     "metadata": {
         "time_init": "2025-01-01",
-        "FAST_MODE": {"on": true, "period": 31536000}
+        "reservoir_simulator_settings": {"fast_mode": true, "period": 31536000}
     },
     "economics": {
         "baseline_year": 2025,
@@ -9,7 +9,7 @@
         "d": 0.07,
         "inflation": 0.0,
         "opex_escalation": 0.0,
-        "usd_per_meter": false,
+        "drilling_cost": false,
         "itc": 0.3,
         "battery_costs_filename": "battery.csv"
 
@@ -37,7 +37,7 @@
                 10,
                 10
             ],
-            "roundtrip_eff": 0.85,
+            "battery_roundtrip_eff": 0.85,
             "battery_lifetime": 15
         }
     },

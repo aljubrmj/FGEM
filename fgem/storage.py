@@ -22,7 +22,7 @@ class LiIonBattery:
 				 time_init,
 				 duration=[4,4],
 				 power_capacity=[5,5],
-				 roundtrip_eff=0.90,
+				 battery_roundtrip_eff=0.90,
 				 lifetime=20,
 				 timestep=timedelta(hours=1)):
 		"""Intiating attributes for LiIonBattery calss, assuming that a second battery is installed after the first dies.
@@ -31,7 +31,7 @@ class LiIonBattery:
 			time_init (datetime): initial timestamp.
 			duration (list, optional): battery duration in hours (including two batteries, where the second is installed after the first dies). Defaults to [4,4].
 			power_capacity (list, optional): battery power capacity in MW (including two batteries, where the second is installed after the first dies). Defaults to [5,5].
-			roundtrip_eff (float, optional): battery roundtrip efficiency (fraction). Defaults to 0.90.
+			battery_roundtrip_eff (float, optional): battery roundtrip efficiency (fraction). Defaults to 0.90.
 			lifetime (int, optional): battery lifetime in years. Defaults to 20.
 			timestep (datetime.timedelta, optional): simulation timestep size. Defaults to timedelta(hours=1).
 		"""
@@ -46,7 +46,7 @@ class LiIonBattery:
 		self.duration = self.duration_list[0] # if self.power_capacity_list[0] > 0.0 else 0.0
 		self.power_capacity = self.power_capacity_list[0]# if self.duration_list[0] > 0.0 else 0.0
 		self.energy_capacity = self.power_capacity * self.duration
-		self.roundtrip_eff = roundtrip_eff
+		self.battery_roundtrip_eff = battery_roundtrip_eff
 		self.energy_content = 0 #MWh
 		self.SOC = self.energy_content / (self.energy_capacity+1e-3) * 100 #%
 		self.lifetime = lifetime

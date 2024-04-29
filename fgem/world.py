@@ -38,16 +38,15 @@ class World:
         self.config_to_placeholders(self.config)
 
         self.data_dir = os.path.join(self.base_dir, self.data_dir)
-        self.energy_filepath = os.path.join(self.data_dir, self.market_dir, self.energy_price) if isinstance(self.energy_price, str) else None
-        self.capacity_filepath = os.path.join(self.data_dir, self.market_dir, self.capacity_price) if isinstance(self.capacity_price, str) else None
-        self.weather_filepath = os.path.join(self.data_dir, self.market_dir, self.ambient_temperature) if isinstance(self.ambient_temperature, str) else None
+        self.energy_filepath = os.path.join(self.data_dir, self.market_dir, self.energy_market_filename) if self.energy_market_filename else None
+        self.capacity_filepath = os.path.join(self.data_dir, self.market_dir, self.capacity_market_filename) if self.capacity_market_filename else None
+        self.weather_filepath = os.path.join(self.data_dir, self.market_dir, self.weather_filename) if self.weather_filename else None
         self.battery_costs_filepath = os.path.join(self.data_dir, self.market_dir, self.battery_costs_filename) if isinstance(self.battery_costs_filename, str) else None
         self.time_init = pd.to_datetime(self.time_init) if self.time_init else pd.to_datetime('today')
         self.start_year = self.time_init.year
         self.end_year = self.start_year + self.L
-        self.height = 2 * self.diameter
         self.num_inj = max(int(np.floor(self.inj_prd_ratio * self.num_prd)), 1) # underestimate the need for injectors since devlopers would often prefer to drill more later if needed
-        self.effective_ppc = self.ppc * (self.num_prd > 0) # zero if either no power plant or no wells installed
+        self.effective_ppc = self.powerplant_capacity * (self.num_prd > 0) # zero if either no power plant or no wells installed
         self.turbine_power_output_MWe = 0
         self.turbine_power_generation_MWh = 0
         self.m_market = 0
@@ -64,8 +63,8 @@ class World:
         self.pp_type_thresh = 175 # if reservoir temperature is greater, then use a flash power plant
         self.half_lateral_length = self.lateral_length/2
 
-        if not self.power_plant_type:
-            self.power_plant_type = "Binary" if self.Tres_init < self.powerplant_type_thresh else "Flash"
+        if not self.powerplant_type:
+            self.powerplant_type = "Binary" if self.Tres_init < self.powerplant_type_thresh else "Flash"
         #make sure battery design is appropriate
         for i in range(len(self.battery_duration)):
             if min(self.battery_duration[i], self.battery_power_capacity[i]) == 0:
@@ -122,12 +121,12 @@ class World:
                 self.p_bat_ppin, self.p_bat_gridin = 0.0, 0.0
             
             self.m_battery = min(self.p_bat_ppin / self.power_output_MWh_kg / 3600, self.m_turbine) if (self.num_prd > 0) else 0.0
-            self.battery_power_output_MWe = self.battery.roundtrip_eff * self.p_bat_out
+            self.battery_power_output_MWe = self.battery.battery_roundtrip_eff * self.p_bat_out
             self.battery_power_generation_MWh = self.battery_power_output_MWe * self.timestep_hrs
         
         if self.num_prd > 0:
             # Check how much the turbine can send to market and compute m_market accordingly
-            self.m_market = min((self.ppc - self.p_bat_ppin) / nonzero(self.power_output_MWh_kg) / 3600,
+            self.m_market = min((self.powerplant_capacity - self.p_bat_ppin) / nonzero(self.power_output_MWh_kg) / 3600,
                                 self.m_turbine - self.m_battery) #kg/s
 
             self.m_excess = self.m_turbine - self.m_market - self.m_battery
@@ -255,7 +254,7 @@ class World:
         self.records["Wholesale Revenue [$MM]"].append(self.records["PP Wholesale Revenue [$MM]"][-1] + self.records["Battery Wholesale Net Revenue [$MM]"][-1])
         self.records["RECs Revenue [$MM]"].append(self.recs_price * (self.turbine_power_output_MWe + self.p_bat_ppin) * self.timestep_hrs / 1e6) # RECs revenue comes out of power from turbine to (1) market and (2) battery
         self.records["PP Capacity Revenue [$MM]"].append(self.effective_ppc * self.timestep_hrs * self.capacity_price  / 1e6)
-        self.records["Battery Capacity Revenue [$MM]"].append(self.battery_elcc * self.roundtrip_eff * self.battery.power_capacity * self.timestep_hrs * self.capacity_price / 1e6 if self.battery else 0.0)
+        self.records["Battery Capacity Revenue [$MM]"].append(self.battery_elcc * self.battery_roundtrip_eff * self.battery.power_capacity * self.timestep_hrs * self.capacity_price / 1e6 if self.battery else 0.0)
         self.records["Capacity Revenue [$MM]"].append(self.records["PP Capacity Revenue [$MM]"][-1] + self.records["Battery Capacity Revenue [$MM]"][-1])
         self.records["Revenue [$MM]"].append(self.records["Wholesale Revenue [$MM]"][-1] + self.records["RECs Revenue [$MM]"][-1] + self.records["Capacity Revenue [$MM]"][-1])
         self.records["M_Bypass [kg/s]"].append(self.m_bypass)
@@ -287,7 +286,7 @@ class World:
             self.records["Bat Charge From PP [MWe]"].append(self.p_bat_ppin)
             self.records["Bat Charge From Grid [MWe]"].append(self.p_bat_gridin)
             self.records["Bat Charge [MWe]"].append(self.p_bat_in)
-            self.records["Bat Discharge [MWe]"].append(self.roundtrip_eff * self.p_bat_out)
+            self.records["Bat Discharge [MWe]"].append(self.battery_roundtrip_eff * self.p_bat_out)
             self.records["SOC [%]"].append(self.battery.SOC)
             self.records["Bat Energy Content [MWh]"].append(self.battery.energy_content)
 
@@ -304,11 +303,10 @@ class World:
 
         self.capex = {}
         self.opex = {}
-        self.inflation_factor = (1+self.inflation)**(self.start_year - self.baseline_year)
         
         # Power plant and upstream costs
         self.Cplant = self.powerplant.compute_cplant(np.max(self.records["WH Temp [deg C]"][0]))
-        Cinterconnection = self.powerplant_interconnection * 1e-6 * self.ppc * 1e3
+        Cinterconnection = self.powerplant_interconnection_cost * 1e-6 * self.powerplant_capacity * 1e3
         self.powerplant_capex = self.Cplant
         self.interconnection_capex = Cinterconnection #$MM
         self.capex["Power Plant"] = np.array([self.powerplant_capex] + [0 for _ in range(self.L-1)])
@@ -316,14 +314,14 @@ class World:
         
         # Drilling and exploration costs
         self.CInjwell = compute_drilling_cost(self.well_depth, self.inj_well_diam, self.half_lateral_length if self.reservoir_type == "uloop" else self.lateral_length, 
-                                              self.numberoflaterals, self.inj_total_drilling_length, self.usd_per_meter)
+                                              self.numberoflaterals, self.inj_total_drilling_length, self.drilling_cost)
         self.CPrdwell = compute_drilling_cost(self.well_depth, self.prd_well_diam, self.half_lateral_length if self.reservoir_type == "uloop" else self.lateral_length, 
-                                              self.numberoflaterals, self.prd_total_drilling_length, self.usd_per_meter)
+                                              self.numberoflaterals, self.prd_total_drilling_length, self.drilling_cost)
         
         self.expl_cost = (1. + self.CPrdwell*0.6) #MM
         self.capex["Exploration"] = np.array([self.expl_cost] + [0 for _ in range(self.L-1)])
-        self.drilling_capex = self.CPrdwell * self.num_prd / self.DSR + self.CInjwell * self.num_inj #$MM
-        self.capex["Drilling"] = np.array([self.drilling_capex] + [0 for _ in range(self.L-1)])
+        self.drilling_cost = self.CPrdwell * self.num_prd / self.DSR + self.CInjwell * self.num_inj #$MM
+        self.capex["Drilling"] = np.array([self.drilling_cost] + [0 for _ in range(self.L-1)])
         
         # Pumping Cost
         injpumphp = np.stack(self.records["Injection Pumping Power [MWe]"]).sum(axis=1).max()*1341
@@ -354,14 +352,14 @@ class World:
         self.capex["Pipelines"] = np.array([self.Cpipe] + [0 for _ in range(self.L-1)])
         
         # Upstream OPEX
-        self.Claborcorrelation = max(1.1*(589.*math.log(self.ppc)-304.)/1e3, 0) #$MM/year
+        self.Claborcorrelation = max(1.1*(589.*math.log(self.powerplant_capacity)-304.)/1e3, 0) #$MM/year
         self.opex["Power Plant"] = np.array(self.L * [1.5/100.*self.Cplant + 0.75*self.Claborcorrelation])
         self.opex["Wellsite"] = np.array(self.L * [1./100.*(self.CPrdwell + self.Cgath) + 0.25*self.Claborcorrelation])
-        self.opex["Makeup Water"] = self.df_records.groupby('Year')["Field Production [kg]"].sum().values*self.waterloss/1000 * 264.172 * (0.00613 if "flash" in self.power_plant_type.lower() else 0.00092) /1e6 # (ref: GETEM page 30)
+        self.opex["Makeup Water"] = self.df_records.groupby('Year')["Field Production [kg]"].sum().values*self.waterloss/1000 * 264.172 * (0.00613 if "flash" in self.powerplant_type.lower() else 0.00092) /1e6 # (ref: GETEM page 30)
         
         # TES cost
-        self.VTank = math.pi/4*self.diameter**2*self.height
-        self.tes_capex = (self.tank_capex_rate * self.VTank)
+        self.VTank = math.pi/4*self.tank_diameter**2*self.tank_height
+        self.tes_capex = (self.tank_cost * self.VTank)
         self.capex["TES"] = np.array([self.tes_capex] + [0 for _ in range(self.L-1)])
 
         # Lithium-ion battery cost
@@ -376,7 +374,7 @@ class World:
             df_bat_costs["energy cost"] = self.battery_energy_cost
             df_bat_costs["power cost"] = self.battery_power_cost
             df_bat_costs["interconnection cost"] = self.battery_interconnection_cost
-            df_bat_costs["FOM"] = self.battery_FOM
+            df_bat_costs["FOM"] = self.battery_fom
             df_bat_costs["power augmentation"] = self.battery_power_augmentation
             df_bat_costs["energy augmentation"] = self.battery_energy_augmentation
         
@@ -399,13 +397,13 @@ class World:
                 if i == 0:
                     unit_capex += battery_interconnection_cost * battery_power_capacity * 1e3 / 1e6
                 else:
+                    #TODO: consider inflating the cost of the second battery unit as it is only installed later in the project lifetime.
                     additional_interconnection = max(battery_power_capacity - self.battery_power_capacity[i-1], 0)
                     unit_capex += additional_interconnection * battery_power_capacity * 1e3 / 1e6
                 capex_ratio = (retirement_year - installation_year) / self.battery_lifetime
                 self.capex["Battery"][installation_year] = unit_capex * capex_ratio #$MM
                 
                 df_temp = df_bat_costs.iloc[installation_year:retirement_year].copy()
-                df_temp[["FOM", "power augmentation", "energy augmentation"]] = df_temp[["FOM", "power augmentation", "energy augmentation"]].mul((1+self.opex_escalation)**np.arange(len(df_temp)), axis=0)
                 bat_fom = df_temp["FOM"].values * battery_power_capacity*1e3 / 1e6 # $MM/year
                 bat_power_aug = df_temp["power augmentation"].values * battery_power_capacity*1e3 / 1e6 # $MM/year
                 bat_energy_aug = df_temp["energy augmentation"].values * (battery_power_capacity*battery_duration*1e3) / 1e6 # $MM/year
@@ -429,7 +427,7 @@ class World:
             self.present_opex_per_unit[k] = np.sum(v/(1+self.d)**np.arange(len(v)))
 
         # Total CAPEX/OPEX
-        self.capex_total = np.sum(np.array([v for v in self.capex.values()]), axis=0) * self.inflation_factor * (1 - self.itc)
+        self.capex_total = np.sum(np.array([v for v in self.capex.values()]), axis=0) * (1 - self.itc)
         self.opex_total = np.sum(np.array([v for v in self.opex.values()]), axis=0) # $MM/year
 
         self.cashout = self.capex_total + self.opex_total ##
@@ -496,11 +494,11 @@ class World:
         self.time_curr = self.time_init - self.timestep
 
         # Create TES storage tank object, if specified
-        self.st = TES(time_init=self.time_init, d=self.diameter, H=self.height) if self.diameter > 0 else None
+        self.st = TES(time_init=self.time_init, d=self.tank_diameter, H=self.tank_height) if self.tank_diameter > 0 else None
 
         # Create Lithium-ion storage object, if specified
         self.battery = LiIonBattery(time_init=self.time_init, duration=self.battery_duration, power_capacity=self.battery_power_capacity, \
-                                    roundtrip_eff=self.roundtrip_eff, lifetime=self.battery_lifetime) if max(self.battery_power_capacity) > 0 else None
+                                    battery_roundtrip_eff=self.battery_roundtrip_eff, lifetime=self.battery_lifetime) if max(self.battery_power_capacity) > 0 else None
 
         # Create reservoir
         self.total_drilling_length, self.prd_total_drilling_length, self.inj_total_drilling_length = None, None, None
@@ -510,23 +508,23 @@ class World:
                                         L=self.L, time_init=self.time_init, well_depth=self.well_depth, 
                                         prd_well_diam=self.prd_well_diam, inj_well_diam=self.inj_well_diam, num_prd=self.num_prd, 
                                         num_inj=self.num_inj, waterloss=self.waterloss,
-                                        power_plant_type=self.power_plant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II, SSR=self.SSR, V_res=self.V_res, phi_res=self.phi_res,
-                                        rock_energy_recovery=self.rock_energy_recovery, FAST_MODE=self.FAST_MODE, ramey=self.ramey, PumpingModel=self.PumpingModel)
+                                        powerplant_type=self.powerplant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II, SSR=self.SSR, V_res=self.V_res, phi_res=self.phi_res,
+                                        rock_energy_recovery=self.rock_energy_recovery, reservoir_simulator_settings=self.reservoir_simulator_settings, ramey=self.ramey, PumpingModel=self.PumpingModel)
         elif self.reservoir_type == "diffusion_convection":                
             self.reservoir = DiffusionConvection(Tres_init=self.Tres_init, geothermal_gradient=self.geothermal_gradient, surface_temp=self.surface_temp,
                                         L=self.L, time_init=self.time_init, well_depth=self.well_depth, 
                                         prd_well_diam=self.prd_well_diam, inj_well_diam=self.inj_well_diam, num_prd=self.num_prd, 
                                         num_inj=self.num_inj, waterloss=self.waterloss, 
-                                        power_plant_type=self.power_plant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II, SSR=self.SSR, 
+                                        powerplant_type=self.powerplant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II, SSR=self.SSR, 
                                         V_res=self.V_res, phi_res=self.phi_res, lateral_length=self.lateral_length, res_thickness=self.res_thickness, 
-                                        krock=self.krock, FAST_MODE=self.FAST_MODE, PumpingModel=self.PumpingModel, ramey=self.ramey)
+                                        krock=self.krock, reservoir_simulator_settings=self.reservoir_simulator_settings, PumpingModel=self.PumpingModel, ramey=self.ramey)
         elif self.reservoir_type == "uloop":
             self.reservoir = ULoopSBT(Tres_init=self.Tres_init, Pres_init=self.Pres_init, surface_temp=self.surface_temp, geothermal_gradient=self.geothermal_gradient,
                          prd_well_diam=self.prd_well_diam, inj_well_diam=self.inj_well_diam, lateral_diam=self.lateral_diam, 
                          well_depth = self.well_depth, numberoflaterals=self.numberoflaterals, half_lateral_length = self.half_lateral_length,
                          lateral_spacing=self.lateral_spacing, L=self.L, time_init=self.time_init, num_prd=self.num_prd, num_inj=self.num_inj, 
-                         waterloss=self.waterloss, power_plant_type=self.power_plant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II,
-                         times_arr=np.linspace(0, self.max_simulation_steps, self.max_simulation_steps), FAST_MODE=self.FAST_MODE, PumpingModel=self.PumpingModel,
+                         waterloss=self.waterloss, powerplant_type=self.powerplant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II,
+                         times_arr=np.linspace(0, self.max_simulation_steps, self.max_simulation_steps), reservoir_simulator_settings=self.reservoir_simulator_settings, PumpingModel=self.PumpingModel,
                          closedloop_design=self.closedloop_design, ramey=self.ramey, dx=self.dx
                         )
             self.total_drilling_length, self.prd_total_drilling_length, self.inj_total_drilling_length = self.reservoir.total_drilling_length, self.reservoir.total_drilling_length/2, self.reservoir.total_drilling_length/2
@@ -536,14 +534,14 @@ class World:
                             L=self.L, time_init=self.time_init, well_depth=self.well_depth, 
                             prd_well_diam=self.prd_well_diam, inj_well_diam=self.inj_well_diam, num_prd=self.num_prd, 
                             num_inj=self.num_inj, waterloss=self.waterloss,
-                            power_plant_type=self.power_plant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II, SSR=self.SSR, 
-                            drawdp=self.drawdp, plateau_length=self.plateau_length, FAST_MODE=self.FAST_MODE, ramey=self.ramey, PumpingModel=self.PumpingModel)
+                            powerplant_type=self.powerplant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II, SSR=self.SSR, 
+                            drawdp=self.drawdp, plateau_length=self.plateau_length, reservoir_simulator_settings=self.reservoir_simulator_settings, ramey=self.ramey, PumpingModel=self.PumpingModel)
         
         # Create power plant
-        if "binary" in self.power_plant_type.lower():
-            self.powerplant = ORCPowerPlant(ppc=self.ppc, Tres=self.reservoir.Tres_init, cf=self.cf)
+        if "binary" in self.powerplant_type.lower():
+            self.powerplant = ORCPowerPlant(ppc=self.powerplant_capacity, Tres=self.reservoir.Tres_init, cf=self.cf)
         else:
-            self.powerplant = FlashPowerPlant(ppc=self.ppc, Tres=self.reservoir.Tres_init, cf=self.cf)
+            self.powerplant = FlashPowerPlant(ppc=self.powerplant_capacity, Tres=self.reservoir.Tres_init, cf=self.cf)
 
         self.update_timestep_for_all_components(self.timestep)
 
@@ -678,46 +676,77 @@ class World:
         self.base_dir = "."
         self.data_dir = "data"
         self.market_dir = "market"
+        self.time_init = "2025-01-01"
+        self.L = 30
+        self.d = 0.07
+        self.inflation = 0.02
+        
+        self.drilling_cost = None
 
         self.battery_costs_filename = None
         self.battery_duration = [0, 0]
         self.battery_power_capacity = [0, 0]
+        self.battery_interconnection_cost = 200
         self.battery_energy_cost = 200
         self.battery_power_cost = 300
-        self.battery_interconnection_cost = 200
-        self.battery_FOM = 10
+        self.battery_fom = 10
         self.battery_energy_augmentation = 3
         self.battery_power_augmentation = 0.5
         self.battery_elcc = 1.0
-        self.roundtrip_eff = 0.85
+        self.battery_roundtrip_eff = 0.85
         self.battery_lifetime = 15
 
-        self.diameter = 0
-        self.tank_capex_rate = 0.00143453
-        self.powerplant_interconnection = 130
-        
+        self.tank_diameter = 0
+        self.tank_cost = 0.00143453
+
+        self.powerplant_capacity = 10
+        self.pipinglength = 5
+        self.powerplant_interconnection_cost = 130
+        self.bypass = False
+
+        self.weather_filename = None
+        self.ambient_temperature = 20
         self.energy_price = 40
-        self.recs_price = 0
+        self.recs_price = 10
         self.capacity_price = 100
+        self.energy_market_filename = None
+        self.capacity_market_filename = None
         self.fat_factor = 1
         self.resample = "1Y"
 
-        self.pipinglength = 5
-        self.bypass = False
-        self.m_prd = 80
-
+        self.reservoir_type = "diffusion_convection"
+        self.Tres_init = 225
+        self.Pres_init = 40
+        self.V_res = 5
+        self.phi_res = 0.1
+        self.res_thickness = 300
+        self.krock = 30
+        self.drawdp = 0.005
+        self.plateau_length = 3
         self.rock_energy_recovery = 1.0
-        self.dx = None
-        self.prd_well_diam = 0.31115 #meters, equivalent to 12.25 inch
-        self.inj_well_diam = 0.31115 #meters, equivalent to 12.25 inch
-        self.lateral_diam = 0.15875 #meters, equivalent to 6.25 inch
-        self.lateral_spacing = 100 #meters
+        self.surface_temp = 20
+        self.well_depth = 3000
+        self.prd_well_diam = 0.3115
+        self.int_well_diam = 0.3115
+        self.numberoflaterals = 1
+        self.num_prd = 4
+        self.inj_prd_ratio = 1.0
+        self.waterloss = 0.05
+        self.pumpeff = 0.75
+        self.DSR 1.0
+        self.SSR = 1.0
+        self.PI = 20
+        self.II = 20
+        self.lateral_diam = 0.3115
+        self.lateral_spacing = 100
         self.closedloop_design = "default"
-        self.ramey = False
-
-        self.FAST_MODE = {"on": False, "period": 31536000, 
+        self.dx = None
+        self.ramey = None
+        self.reservoir_simulator_settings = {"fast_mode": False, "period": 31536000, 
         "accuracy": 1, "DynamicFluidProperties": True}
+        self.geothermal_gradient = (self.Tres_init - self.surface_temp)/self.well_depth * 1000
 
+        self.m_prd = 80
 
 if __name__ == '__main__':
     pass

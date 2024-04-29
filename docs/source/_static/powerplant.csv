@@ -1,0 +1,7 @@
+,Unit,Values,Description,Default
+powerplant_interconnection_cost,USD/kW,float,capital cost for power plant grid interconnection,130
+powerplant_type,,str,"type of power plant. Options: (1) ""Flash"" for single flash power plant , (2)  ""Binary"" for subcritical ORC power plant","""Binary"""
+powerplant_capacity,MW,float,power plant nameplate capacity,10
+cf,,float,"powerplant capacity factor related to regular maintenance. Note that this does not include decrease in capacity factors due to ambient temperautre variations, reservoir temperature decline, etc.",0.99
+pipinglength,km,float,length of piping network required for the power plant,5
+bypass,,bool,"whether or not bypassing the power plant or turbine is allowed in this simulation. If set to True, it automatically bypasses flow away from power plant during hours of negative pricing. It also allows the user to specify other occasios when to bypass the power plant as desired.",FALSE

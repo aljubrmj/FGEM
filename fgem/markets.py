@@ -20,7 +20,7 @@ class TabularPowerMarket:
                             recs_price=30,
                             L=30,
                             time_init=pd.to_datetime('today'),
-                            resample=False,
+                            resample=None,
                             fat_factor=1,
                             fat_window=24,
                                 ):
@@ -32,8 +32,8 @@ class TabularPowerMarket:
             recs_price (float, optional): renewable energy credits (RECs) price in USD/MWh. Defaults to 30.
             L (int, optional): project lifetime in years. Defaults to 30.
             time_init (datetime, optional): project start date. Defaults to pd.to_datetime('today').
-            resample (bool, optional): whether or not to resample the project to a specific timestep (Options: "1Y", "1m", "1w", "1d", "1h" for yearly, monthly, weekly, daily, or hourly timestepping). Defaults to False.
-            fat_factor (float, optional): using mean diversion to make the arbitrage opportunity more pronounced. Defaults to 1.
+            resample (str, optional): timeframe to which project market data is resampled (Options: "1Y", "1m", "1w", "1d", "1h" for yearly, monthly, weekly, daily, or hourly timestepping). Defaults to False.
+            fat_factor (float, optional): multiplier of mean diversion to make the arbitrage opportunity more pronounced. Defaults to 1.
             fat_window (int, optional): window considered when applying mean diversion to make the arbitrage opportunity more pronounced. Defaults to 24.
         """
 

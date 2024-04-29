@@ -1,18 +1,11 @@
 {
-    "metadata": {
-        "time_init": "2025-01-01"
-    },
     "economics": {
-        "baseline_year": 2025,
+        "time_init": "2025-01-01",
         "L": 25,
         "d": 0.07,
-        "inflation": 0.0,
-        "opex_escalation": 0.0,
-        "usd_per_meter": false,
-        "itc": 0.0
-
-    },
-    "market": {
+        "inflation": 0.02,
+        "drilling_cost": false,
+        "itc": 0.0,
         "energy_price": 40,
         "capacity_price": 0,
         "resample": "1m"

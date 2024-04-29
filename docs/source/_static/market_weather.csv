@@ -1,0 +1,10 @@
+,Unit,Values,Description,Default
+ambient_temperature,¡ C,float,ambient temperature,20
+weather_filename,,str,"CSV file with hourly weather data for one full year (i.e., total of 8760 horus) . For instance, refer to ``examples/data/market/weather.csv``",
+energy_price,USD/MWh,float,energy price,40
+recs_price,USD/MWh,float,value of renewable energy credits (RECs) or green credits,10
+capacity_price,USD/kW-year,float,capacity value,100
+energy_market_filename,,str,"CSV file with energy market data, spanning the entire project lifetime. For instance, refer to ``examples/data/market/wholesale.csv``",
+capacity_market_filename,,str,"CSV file with capacity value (one value per year throughout the project lifetime). For instance, refer to ``examples/data/market/capacity.csv``",
+fat_factor,,float,multiplier of mean diversion to make the arbitrage opportunity more pronounced in wholesale power markets. Value of 1.0 means that this parameter has no effect.,1
+resample,,str,"timeframe to which project market data is resampled (Options: ""1Y"", ""1m"", ""1w"", ""1d"", ""1h"" for yearly, monthly, weekly, daily, or hourly timestepping)",None

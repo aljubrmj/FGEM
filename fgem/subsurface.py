@@ -32,7 +32,7 @@ class BaseReservoir(object):
 				 num_prd,
 				 num_inj,
 				 waterloss,
-				 power_plant_type,
+				 powerplant_type,
 				 pumpeff,
 				 ramey=True,
 				 pumping=True,
@@ -45,7 +45,7 @@ class BaseReservoir(object):
                  II = 20,
                  SSR = 1.0,
                  N_ramey_mv_avg=168,
-                 FAST_MODE={"on": False, "period": 3600*8760/12},
+                 reservoir_simulator_settings={"fast_mode": False, "period": 3600*8760/12},
 				 PumpingModel="OpenLoop",
 				 timestep=timedelta(hours=1)
                  ):
@@ -63,7 +63,7 @@ class BaseReservoir(object):
 			num_prd (int): number of producers.
 			num_inj (int): number of injectors.
 			waterloss (float): fraction of injected water that is lost to the reservoir (fraction).
-			power_plant_type (str): type of power plant (either "Binary" or "Flash").
+			powerplant_type (str): type of power plant (either "Binary" or "Flash").
 			pumpeff (float): pump efficiency (fraction).
 			ramey (bool, optional): whether or not to use ramey's model for wellbore heat loss/gain. Defaults to True.
 			pumping (bool, optional): whther or not to account for parasitic losses due to pumping requirements. Defaults to True.
@@ -76,7 +76,7 @@ class BaseReservoir(object):
 			II (float, optional): injectivity index in kg/s/bar. Defaults to 20.
 			SSR (float, optional): Stimulation success rate, which is a multiplier used to reduce PI and II when stimulation is not fully successful. Defaults to 1.0.
 			N_ramey_mv_avg (int, optional): number of timesteps used for averaging the f-function when computing ramey's heat losses with variable mass flow rates. Defaults to 168.
-			FAST_MODE (dict, optional): information used to reduce the required timestepping when simulating the reservoir. It comes with keys of "on" to turn it on and "period" to specify the time period needed to pass before the reservoir state is updated, which is aimed at reducing computational requirements in exchange for loss in accuracy. Defaults to {"on": False, "period": 3600*8760/12}.
+			reservoir_simulator_settings (dict, optional): information used to reduce the required timestepping when simulating the reservoir. It comes with keys of "fast_mode" to turn it on and "period" to specify the time period needed to pass before the reservoir state is updated, which is aimed at reducing computational requirements in exchange for loss in accuracy. Defaults to {"fast_mode": False, "period": 3600*8760/12}.
 			PumpingModel (str, optional): model type used to compute pressure losses (either "OpenLoop" or "ClosedLoop"). Defaults to "OpenLoop".
 			timestep (datetime.timedelta, optional): simulation timestep size. Defaults to timedelta(hours=1).
 		"""
@@ -106,14 +106,14 @@ class BaseReservoir(object):
 		self.II = SSR * II if SSR > 0.0 else II #0.3 Based on GETEM page 61
 		self.waterloss = waterloss
 		self.pumpeff = pumpeff
-		self.power_plant_type = power_plant_type
+		self.powerplant_type = powerplant_type
 		self.pumpdepth =np.zeros(self.num_prd)
 		self.dT_prd = 0.0
 		self.dT_inj = 0.0
 		self.m_prd_ramey_mv_avg = 100*np.ones(self.num_prd) # randomly initialized, but it will quickly converge following the dispatch strategy
 		self.N_ramey_mv_avg = N_ramey_mv_avg
-		self.FAST_MODE = FAST_MODE
-		self.FAST_MODE["time_passed"] = np.inf
+		self.reservoir_simulator_settings = reservoir_simulator_settings
+		self.reservoir_simulator_settings["time_passed"] = np.inf
 		self.PumpingModel = PumpingModel
 		self.m_prd_old = np.array(self.num_prd*[0], dtype='float')
 		self.m_inj_old = np.array(self.num_inj*[0], dtype='float')
@@ -226,11 +226,11 @@ class BaseReservoir(object):
 		self.pre_model(self.time_curr, self.m_prd, self.m_inj, T_inj)
 		self.pre_wellbore_calculations(self.time_curr, self.m_prd, self.m_inj, T_inj, T_amb)
   
-		# if fast_mode and still not period time yet, then do not update anything
-		if self.FAST_MODE["on"]:
-			self.FAST_MODE["time_passed"] += self.timestep.total_seconds()
-			if self.FAST_MODE["time_passed"] >= self.FAST_MODE["period"]:
-				self.FAST_MODE["time_passed"] = 0.0
+		# if reservoir_simulator_settings and still not period time yet, then do not update anything
+		if self.reservoir_simulator_settings["fast_mode"]:
+			self.reservoir_simulator_settings["time_passed"] += self.timestep.total_seconds()
+			if self.reservoir_simulator_settings["time_passed"] >= self.reservoir_simulator_settings["period"]:
+				self.reservoir_simulator_settings["time_passed"] = 0.0
 			else:
 				if not self.same_flow_rates:
 					self.wellbore_calculations(self.time_curr, self.m_prd, self.m_inj, T_inj, T_amb)
@@ -440,7 +440,7 @@ class PercentageReservoir(BaseReservoir):
 				 num_prd,
 				 num_inj,
 				 waterloss,
-				 power_plant_type,
+				 powerplant_type,
 				 pumpeff,
 				 ramey=True,
 				 pumping=True,
@@ -455,7 +455,7 @@ class PercentageReservoir(BaseReservoir):
                  N_ramey_mv_avg=168,
                  drawdp=0.005,
                  plateau_length=3,
-                 FAST_MODE={"on": False, "period": 3600*8760/12},
+                 reservoir_simulator_settings={"fast_mode": False, "period": 3600*8760/12},
 				 PumpingModel="OpenLoop"
                  ):
 
@@ -473,7 +473,7 @@ class PercentageReservoir(BaseReservoir):
 			num_prd (int): number of producers.
 			num_inj (int): number of injectors.
 			waterloss (float): fraction of injected water that is lost to the reservoir (fraction).
-			power_plant_type (str): type of power plant (either "Binary" or "Flash").
+			powerplant_type (str): type of power plant (either "Binary" or "Flash").
 			pumpeff (float): pump efficiency (fraction).
 			ramey (bool, optional): whether or not to use ramey's model for wellbore heat loss/gain. Defaults to True.
 			pumping (bool, optional): whther or not to account for parasitic losses due to pumping requirements. Defaults to True.
@@ -488,7 +488,7 @@ class PercentageReservoir(BaseReservoir):
 			N_ramey_mv_avg (int, optional): number of timesteps used for averaging the f-function when computing ramey's heat losses with variable mass flow rates. Defaults to 168.
 			drawdp (float, optional): annual decline rate of reservoir temperature (fraction). Defaults to 0.005.
 			plateau_length (int, optional): number of years before reservoir temperature starts to decline. Defaults to 3.
-			FAST_MODE (dict, optional): information used to reduce the required timestepping when simulating the reservoir. It comes with keys of "on" to turn it on and "period" to specify the time period needed to pass before the reservoir state is updated, which is aimed at reducing computational requirements in exchange for loss in accuracy. Defaults to {"on": False, "period": 3600*8760/12}.
+			reservoir_simulator_settings (dict, optional): information used to reduce the required timestepping when simulating the reservoir. It comes with keys of "fast_mode" to turn it on and "period" to specify the time period needed to pass before the reservoir state is updated, which is aimed at reducing computational requirements in exchange for loss in accuracy. Defaults to {"fast_mode": False, "period": 3600*8760/12}.
 			PumpingModel (str, optional): model type used to compute pressure losses (either "OpenLoop" or "ClosedLoop"). Defaults to "OpenLoop".
 		"""
 
@@ -503,7 +503,7 @@ class PercentageReservoir(BaseReservoir):
 											num_prd,
 											num_inj,
 											waterloss,
-											power_plant_type,
+											powerplant_type,
 											pumpeff,
 											ramey,
 											pumping,
@@ -516,7 +516,7 @@ class PercentageReservoir(BaseReservoir):
 											II,
 											SSR,
 											N_ramey_mv_avg,
-           									FAST_MODE)
+           									reservoir_simulator_settings)
 		self.numberoflaterals = 1
 		self.well_tvd = well_depth
 		self.well_md = self.well_tvd
@@ -600,7 +600,7 @@ class EnergyDeclineReservoir(BaseReservoir):
 				 num_prd,
 				 num_inj,
 				 waterloss,
-				 power_plant_type,
+				 powerplant_type,
 				 pumpeff,
 				 ramey=True,
 				 pumping=True,
@@ -618,7 +618,7 @@ class EnergyDeclineReservoir(BaseReservoir):
                  compute_hydrostatic_pressure=True,
                  rock_energy_recovery=1.0,
                  decline_func = lambda k,D,t: (k / t* 2e-2)**5,
-                 FAST_MODE={"on": False, "period": 3600*8760/12},
+                 reservoir_simulator_settings={"fast_mode": False, "period": 3600*8760/12},
 				 PumpingModel="OpenLoop"
                  ):
 		"""Initialize reservoir model.
@@ -636,7 +636,7 @@ class EnergyDeclineReservoir(BaseReservoir):
 			num_prd (int): number of producers.
 			num_inj (int): number of injectors.
 			waterloss (float): fraction of injected water that is lost to the reservoir (fraction).
-			power_plant_type (str): type of power plant (either "Binary" or "Flash").
+			powerplant_type (str): type of power plant (either "Binary" or "Flash").
 			pumpeff (float): pump efficiency (fraction).
 			ramey (bool, optional): whether or not to use ramey's model for wellbore heat loss/gain. Defaults to True.
 			pumping (bool, optional): whther or not to account for parasitic losses due to pumping requirements. Defaults to True.
@@ -654,7 +654,7 @@ class EnergyDeclineReservoir(BaseReservoir):
 			compute_hydrostatic_pressure: (bool, optional): whether or not hydrostatic pressure is computed or assumed to be equal to the initial reservoir pressure. Defaults to True.
 			rock_energy_recovery (float, optional): maximum fraction of subsurface energy that is recoverable (fraction). Defaults to 1.0.
 			decline_func (func, optional): function used to establish the correlation between temperature decline and energy extraction. Defaults to a 5th order polynomial.
-			FAST_MODE (dict, optional): information used to reduce the required timestepping when simulating the reservoir. It comes with keys of "on" to turn it on and "period" to specify the time period needed to pass before the reservoir state is updated, which is aimed at reducing computational requirements in exchange for loss in accuracy. Defaults to {"on": False, "period": 3600*8760/12}.
+			reservoir_simulator_settings (dict, optional): information used to reduce the required timestepping when simulating the reservoir. It comes with keys of "fast_mode" to turn it on and "period" to specify the time period needed to pass before the reservoir state is updated, which is aimed at reducing computational requirements in exchange for loss in accuracy. Defaults to {"fast_mode": False, "period": 3600*8760/12}.
 			PumpingModel (str, optional): model type used to compute pressure losses (either "OpenLoop" or "ClosedLoop"). Defaults to "OpenLoop".
 		"""
 
@@ -669,7 +669,7 @@ class EnergyDeclineReservoir(BaseReservoir):
 											num_prd,
 											num_inj,
 											waterloss,
-											power_plant_type,
+											powerplant_type,
 											pumpeff,
 											ramey,
 											pumping,
@@ -682,7 +682,7 @@ class EnergyDeclineReservoir(BaseReservoir):
 											II,
 											SSR,
 											N_ramey_mv_avg,
-											FAST_MODE,
+											reservoir_simulator_settings,
 											PumpingModel)
 
 		self.numberoflaterals = 1
@@ -793,7 +793,7 @@ class DiffusionConvection(BaseReservoir):
 				 num_prd,
 				 num_inj,
 				 waterloss,
-				 power_plant_type,
+				 powerplant_type,
 				 pumpeff,
 				 ramey=True,
 				 pumping=True,
@@ -810,7 +810,7 @@ class DiffusionConvection(BaseReservoir):
                  phi_res=0.1,
                  lateral_length=1000,
                  dynamic_properties=False,
-                 FAST_MODE={"on": False, "period": 3600*8760/12},
+                 reservoir_simulator_settings={"fast_mode": False, "period": 3600*8760/12},
 				 PumpingModel="OpenLoop"
                  ):
 
@@ -828,7 +828,7 @@ class DiffusionConvection(BaseReservoir):
 			num_prd (int): number of producers.
 			num_inj (int): number of injectors.
 			waterloss (float): fraction of injected water that is lost to the reservoir (fraction).
-			power_plant_type (str): type of power plant (either "Binary" or "Flash").
+			powerplant_type (str): type of power plant (either "Binary" or "Flash").
 			pumpeff (float): pump efficiency (fraction).
 			ramey (bool, optional): whether or not to use ramey's model for wellbore heat loss/gain. Defaults to True.
 			pumping (bool, optional): whther or not to account for parasitic losses due to pumping requirements. Defaults to True.
@@ -845,7 +845,7 @@ class DiffusionConvection(BaseReservoir):
 			phi_res (float, optional): reservoir porosity (fraction). Defaults to 0.1.
 			lateral_length (float, optional):  lateral length for each well in meters. Defaults to 1000.
 			dynamic_properties (bool, optional):  whether or not geofluid properties in the subsurface are updated using steamtables as a function of varying subsurface temperature. Defaults to False.
-			FAST_MODE (dict, optional): information used to reduce the required timestepping when simulating the reservoir. It comes with keys of "on" to turn it on and "period" to specify the time period needed to pass before the reservoir state is updated, which is aimed at reducing computational requirements in exchange for loss in accuracy. Defaults to {"on": False, "period": 3600*8760/12}.
+			reservoir_simulator_settings (dict, optional): information used to reduce the required timestepping when simulating the reservoir. It comes with keys of "fast_mode" to turn it on and "period" to specify the time period needed to pass before the reservoir state is updated, which is aimed at reducing computational requirements in exchange for loss in accuracy. Defaults to {"fast_mode": False, "period": 3600*8760/12}.
 			PumpingModel (str, optional): model type used to compute pressure losses (either "OpenLoop" or "ClosedLoop"). Defaults to "OpenLoop".
 		"""
 
@@ -860,7 +860,7 @@ class DiffusionConvection(BaseReservoir):
 											num_prd,
 											num_inj,
 											waterloss,
-											power_plant_type,
+											powerplant_type,
 											pumpeff,
 											ramey,
 											pumping,
@@ -873,7 +873,7 @@ class DiffusionConvection(BaseReservoir):
 											II,
 											SSR,
 											N_ramey_mv_avg,
-											FAST_MODE,
+											reservoir_simulator_settings,
 											PumpingModel)
 		
 		self.numberoflaterals = 1
@@ -1038,7 +1038,7 @@ class ULoopSBT(BaseReservoir):
 				 num_prd,
 				 num_inj,
 				 waterloss,
-				 power_plant_type,
+				 powerplant_type,
 				 pumpeff,
 				 times_arr,
 				 ramey=False,
@@ -1067,7 +1067,7 @@ class ULoopSBT(BaseReservoir):
                  lateralflowallocation=None,
                  lateralflowmultiplier=1,
                  fullyimplicit=1,
-                 FAST_MODE={"on": False, "accuracy": 5, "DynamicFluidProperties": False},
+                 reservoir_simulator_settings={"fast_mode": False, "accuracy": 5, "DynamicFluidProperties": False},
 				 PumpingModel="ClosedLoop",
 				 closedloop_design="Default",
                  ):
@@ -1086,7 +1086,7 @@ class ULoopSBT(BaseReservoir):
 			num_prd (int): number of producers.
 			num_inj (int): number of injectors.
 			waterloss (float): fraction of injected water that is lost to the reservoir (fraction).
-			power_plant_type (str): type of power plant (either "Binary" or "Flash").
+			powerplant_type (str): type of power plant (either "Binary" or "Flash").
 			pumpeff (float): pump efficiency (fraction).
 			ramey (bool, optional): whether or not to use ramey's model for wellbore heat loss/gain. Defaults to True.
 			pumping (bool, optional): whther or not to account for parasitic losses due to pumping requirements. Defaults to True.
@@ -1114,7 +1114,7 @@ class ULoopSBT(BaseReservoir):
 			lateralflowallocation (int, optional): distribution of flow across uloop laterals. Defaults to None (equal distribution)
 			lateralflowmultiplier (int, optional): velocity multiplier across laterals. Defaults to 1.
 			fullyimplicit (int, optional): how to solve the numerical system of equations using Euler's. Defaults to 1.
-			FAST_MODE (dict, optional): information used to reduce the required timestepping when simulating the reservoir. It comes with keys of "on" to turn it on and "period" to specify the time period needed to pass before the reservoir state is updated, which is aimed at reducing computational requirements in exchange for loss in accuracy. Defaults to {"on": False, "period": 3600*8760/12}.
+			reservoir_simulator_settings (dict, optional): information used to reduce the required timestepping when simulating the reservoir. It comes with keys of "fast_mode" to turn it on and "period" to specify the time period needed to pass before the reservoir state is updated, which is aimed at reducing computational requirements in exchange for loss in accuracy. Defaults to {"fast_mode": False, "period": 3600*8760/12}.
 			PumpingModel (str, optional): model type used to compute pressure losses (either "OpenLoop" or "ClosedLoop"). Defaults to "ClosedLoop".
 			closedloop_design (str, optional): Type of closedloop_design to simulate (either "Default" or "Eavor"). Defaults to "Default".
 		"""
@@ -1130,7 +1130,7 @@ class ULoopSBT(BaseReservoir):
 											num_prd,
 											num_inj,
 											waterloss,
-											power_plant_type,
+											powerplant_type,
 											pumpeff,
 											ramey,
 											pumping,
@@ -1143,7 +1143,7 @@ class ULoopSBT(BaseReservoir):
 											II,
 											SSR,
 											N_ramey_mv_avg,
-											FAST_MODE,
+											reservoir_simulator_settings,
 											PumpingModel)
 
 		self.well_tvd = well_depth
@@ -1163,7 +1163,7 @@ class ULoopSBT(BaseReservoir):
 		self.lateralflowallocation = lateralflowallocation if lateralflowallocation else self.numberoflaterals*[1/self.numberoflaterals]
 		self.lateralflowmultiplier = lateralflowmultiplier
 		self.fullyimplicit = fullyimplicit
-		self.accuracy = FAST_MODE["accuracy"]
+		self.accuracy = reservoir_simulator_settings["accuracy"]
 		self.L = L
 		self.geothermal_gradient = geothermal_gradient/1000 #C/m
 		self.surface_temp = surface_temp
@@ -1536,7 +1536,7 @@ class ULoopSBT(BaseReservoir):
 			T_inj (float): injection temperature in deg C.
 		"""
 
-		if self.FAST_MODE["DynamicFluidProperties"]:
+		if self.reservoir_simulator_settings["DynamicFluidProperties"]:
 			self.rho_f = densitywater(self.Tres)
 			self.cp_f = heatcapacitywater(self.Tres) # J/kg-degC
 			self.mu_f = viscositywater(self.Tres)

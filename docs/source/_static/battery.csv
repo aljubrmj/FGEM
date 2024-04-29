@@ -1,0 +1,13 @@
+,Unit,Values,Description,Default
+battery_interconnection_cost,USD/kW,float,capital cost for battery grid interconnection,
+battery_energy_cost,USD/MWh,float,battery energy capital cost,200
+battery_power_cost,USD/kW,float,battery power capital cost,300
+battery_fom,USD/kW,float,battery annual  fixed operation expenditure,10
+battery_energy_augmentation,USD/MWh,float,"battery energy augmentation cost, such that the battery efficiency does not change throughout its lifetime thanks to spending this augmentation cost",3
+battery_power_augmentation,USD/kW,float,"battery power augmentation cost, such that the battery efficiency does not change throughout its lifetime thanks to spending this augmentation cost",0.5
+battery_elcc,,float,battery effective load carrying capacity,1
+battery_lifetime,years,int,battery lifetime,15
+battery_roundtrip_eff,,float,battery roundtrip efficiency,0.85
+battery_duration,"[hrs, hrs]",list,battery duration for two units where the second battery unit is installed after the first is retired.,"[0, 0]"
+battery_power_capacity,"[MW, MW]",list,battery power capacity for two units where the second battery unit is installed after the first is retired.,"[0, 0]"
+battery_costs_filename,,str,"CSV file with battery costs and effective load carrying capacity (i.e., one set of values for each year throughout the project lifetime). For instance, refer to ``examples/data/market/battery.csv``",

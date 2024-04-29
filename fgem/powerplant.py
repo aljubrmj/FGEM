@@ -22,7 +22,7 @@ class BasePowerPlant(object):
             cf (float): capacity factor.
             timestep (datetime, optional): simulation timestep size. Defaults to timedelta(hours=1).
         """
-        self.ppc = ppc
+        self.powerplant_capacity = ppc
         self.cf = cf
 
         #default starting point
@@ -89,7 +89,7 @@ class BasePowerPlant(object):
         return thermal_exergy
     
     def compute_power_output(self, m_turbine):
-        return self.cf * min(self.ppc, self.power_output_MWh_kg * (m_turbine * 3600))
+        return self.cf * min(self.powerplant_capacity, self.power_output_MWh_kg * (m_turbine * 3600))
     
     def step(self,
             m_turbine,
@@ -152,7 +152,7 @@ class ORCPowerPlant(BasePowerPlant):
             CCAPP1 = C3*MaxProducedTemperature**3 + C2*MaxProducedTemperature**2 + C1*MaxProducedTemperature + C0
         else:
             CCAPP1 = 2231 - 2*(MaxProducedTemperature-150.)
-        Cplantcorrelation = CCAPP1*math.pow(self.ppc/15.,-0.06) * 1e-6 * self.ppc * 1e3 #$MM
+        Cplantcorrelation = CCAPP1*math.pow(self.powerplant_capacity/15.,-0.06) * 1e-6 * self.powerplant_capacity * 1e3 #$MM
         return Cplantcorrelation
     
     def compute_geofluid_consumption(self, T, T_amb):
@@ -241,7 +241,7 @@ class FlashPowerPlant(BasePowerPlant):
             float: cost of power plant in USD/kW
         """
 
-        if self.ppc < 10:
+        if self.powerplant_capacity < 10:
             C2 = 4.8472E-2 
             C1 = -35.2186
             C0 = 8.4474E3
@@ -250,7 +250,7 @@ class FlashPowerPlant(BasePowerPlant):
             D0 = 6.9911E3
             PLL = 5.
             PRL = 10.
-        elif self.ppc < 25:
+        elif self.powerplant_capacity < 25:
             C2 = 4.0604E-2 
             C1 = -29.3817
             C0 = 6.9911E3	  
@@ -259,7 +259,7 @@ class FlashPowerPlant(BasePowerPlant):
             D0 = 5.5263E3        
             PLL = 10.
             PRL = 25.
-        elif self.ppc < 50:
+        elif self.powerplant_capacity < 50:
             C2 = 3.2773E-2 
             C1 = -23.5519
             C0 = 5.5263E3
@@ -268,7 +268,7 @@ class FlashPowerPlant(BasePowerPlant):
             D0 = 5.1787E3	          
             PLL = 25.
             PRL = 50.
-        elif self.ppc < 75:
+        elif self.powerplant_capacity < 75:
             C2 = 3.4716E-2 
             C1 = -23.8139
             C0 = 5.1787E3	
@@ -290,7 +290,7 @@ class FlashPowerPlant(BasePowerPlant):
         CCAPPRL = D2*MaxProducedTemperature**2 + D1*MaxProducedTemperature + D0  
         b = math.log(CCAPPRL/CCAPPLL)/math.log(PRL/PLL)
         a = CCAPPRL/PRL**b
-        Cplantcorrelation = 0.8*a*math.pow(self.ppc,b)*self.ppc*1000./1e6 #factor 0.75 to make double flash 25% more expansive than single flash
+        Cplantcorrelation = 0.8*a*math.pow(self.powerplant_capacity,b)*self.powerplant_capacity*1000./1e6 #factor 0.75 to make double flash 25% more expansive than single flash
     
         return Cplantcorrelation
     
