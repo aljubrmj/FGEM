@@ -1,25 +1,24 @@
 {
     "metadata": {
-        "time_init": "2025-01-01",
-        "FAST_MODE": {"on": true, "period": 2628000}
+        "time_init": "2025-01-01"
     },
     "economics": {
         "baseline_year": 2025,
-        "L": 30,
+        "L": 25,
         "d": 0.07,
         "inflation": 0.0,
         "opex_escalation": 0.0,
         "usd_per_meter": false,
-        "itc": 0.3
+        "itc": 0.0
 
     },
     "market": {
-        "energy_price": "wholesale.csv",
-        "capacity_price": "capacity.csv",
-        "resample": "1d"
+        "energy_price": 40,
+        "capacity_price": 0,
+        "resample": "1m"
     },
     "weather": {
-        "ambient_temperature": "weather.csv"
+        "ambient_temperature": 15
     },
     "downstream": {
         "powerplant": {
@@ -29,18 +28,20 @@
     }
     },
     "upstream": {
-        "reservoir_type": "diffusion_convection",
+        "reservoir_type": "PercentageDecline",
         "Tres_init": 145,
         "Pres_init": 40,
         "V_res": 5,
         "phi_res": 0.1,
+        "drawdp": 0.005,
+        "plateau_length": 0,
         "geothermal_gradient": 65,
         "surface_temp": 15,
         "well_depth": 2000.0,
         "lateral_length": 0,
         "numberoflaterals": 1,
-        "thickness": 300,
-        "krock": 50,
+        "res_thickness": 1000,
+        "krock": 3,
         "prd_well_diam": 0.244475,
         "inj_well_diam": 0.244475,
         "num_prd": 3,
@@ -52,6 +53,6 @@
         "PI": 10,
         "II": 10,
         "PumpingModel": "OpenLoop",
-        "ramey": true
+        "ramey": false
     }
 }

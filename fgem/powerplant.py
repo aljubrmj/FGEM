@@ -14,7 +14,14 @@ class BasePowerPlant(object):
     
     def __init__(self, ppc, Tres, cf,
                  timestep=timedelta(hours=1)):
-        """Define attributes for the BasePowerPlant class."""
+        """Define attributes for the BasePowerPlant class.
+
+        Args:
+            ppc (float): power plant nameplate capacity in MW.
+            Tres (float): reservoir temperature in deg C.
+            cf (float): capacity factor.
+            timestep (datetime, optional): simulation timestep size. Defaults to timedelta(hours=1).
+        """
         self.ppc = ppc
         self.cf = cf
 
@@ -26,22 +33,51 @@ class BasePowerPlant(object):
         self.T_inj = Tres/2
         self.timestep = timestep
 
-    def extend_ppc(self, added_ppc):
-        """Increase power plant capacity."""
-        self.ppc += added_ppc
-
     def compute_geofluid_consumption(self, T, T_amb):
+        """Compute geofluid consumption.
+
+        Args:
+            T (float): power plant inlet temperature in deg C.
+            T_amb (float): ambient temperautre in deg C.
+
+        Raises:
+            NotImplementedError: you must implemented this.
+        """
         raise NotImplementedError
     
     def compute_injection_temp(self, T, T_amb):
+        """Compute injection temperature.
+
+        Args:
+            T (float): power plant inlet temperature in deg C.
+            T_amb (float): ambient temperautre in deg C.
+
+        Raises:
+            NotImplementedError: you must implement this.
+        """
         raise NotImplementedError
 
     def compute_cplant(self, MaxProducedTemperature):
+        """Compute power plant capex.
+
+        Args:
+            MaxProducedTemperature (float): maximum produced geofluid temperature in deg C.
+
+        Raises:
+            NotImplementedError: you must implement this.
+        """
         raise NotImplementedError
 
     def compute_thermalexergy(self, T, T_amb):
-        
-        """Compute power plant thermal exergy for an inflowing geofluid at a given ambient temperature."""
+        """Compute power plant thermal exergy for an inflowing geofluid at a given ambient temperature.
+
+        Args:
+            T (float): power plant inlet temperature in deg C.
+            T_amb (float): ambient temperature in deg C.
+
+        Returns:
+            float: thermal exergy in MJ/kg.
+        """
         
         A = 4.041650
         B = -1.204E-2
@@ -49,6 +85,7 @@ class BasePowerPlant(object):
         T_amb_k = T_amb + 273.15 #deg K
         T_k = T + 273.15 #deg K
         thermal_exergy = ((A-B*T_amb_k)*(T_k-T_amb_k)+(B-C*T_amb_k)/2.0*(T_k**2-T_amb_k**2)+C/3.0*(T_k**3-T_amb_k**3)-A*T_amb_k*np.log(T_k/T_amb_k))*2.2046/947.83 #MJ/kg
+
         return thermal_exergy
     
     def compute_power_output(self, m_turbine):
@@ -60,9 +97,18 @@ class BasePowerPlant(object):
             T_amb,
             m_tes_out=0,
             T_tes_out=100,):
-        
-        """Get power plant outputs for a timestep."""
-                
+
+        """Step and update power plant.
+
+        Args:
+            m_turbine (float): total mass flowing into the turbine in kg/s (including flow from both producers and thermal energy storage tank).
+            T_prd_wh (float): producer wellheat temperature in deg C.
+            T_amb (float): ambient temperature in deg C.
+            m_tes_out (float, optional): mass flow rate from the thermal energy storage tank in kg/s. Defaults to 0.
+            T_tes_out (float, optional): temperature of water of the thermal energy storage tank. Defaults to 100.
+
+        """
+
         # If we are using all geofluid to charge the tank, then there is no output
         if m_turbine == 0:
             self.T_inj = self.compute_injection_temp(self.T_mix, T_amb)
@@ -75,18 +121,29 @@ class BasePowerPlant(object):
             self.power_generation_MWh = self.power_output_MWe * (self.timestep.total_seconds()/3600)
             self.T_inj = self.compute_injection_temp(self.T_mix, T_amb)
 
-        # return self.power_output_MWh_kg, self.power_output_MWe, self.power_generation_MWh, self.T_mix, self.T_inj
-    
 class ORCPowerPlant(BasePowerPlant):
     
-    """ORC Binary power plant."""
+    """ORC Binary power plant based on GEOPHIRES."""
     
     def __init__(self, ppc, Tres, cf=1.0):
-        """Define attributes for the ORCPowerPlant class."""
+        """Define attributes for the BasePowerPlant class.
+
+        Args:
+            ppc (float): power plant nameplate capacity in MW.
+            Tres (float): reservoir temperature in deg C.
+            cf (float): capacity factor. Defualts to 1.
+        """
         super(ORCPowerPlant, self).__init__(ppc, Tres, cf)
 
     def compute_cplant(self, MaxProducedTemperature):
-        """Compute cost of an ORC binary power plant."""
+        """Compute power plant capex.
+
+        Args:
+            MaxProducedTemperature (float): maximum produced geofluid temperature in deg C.
+
+        Returns:
+            float: cost of power plant in USD/kW
+        """
         if (MaxProducedTemperature < 150.):
             C3 = -1.458333E-3
             C2 = 7.6875E-1 
@@ -99,7 +156,15 @@ class ORCPowerPlant(BasePowerPlant):
         return Cplantcorrelation
     
     def compute_geofluid_consumption(self, T, T_amb):
-        """Compute the power output in MWh electricity per kg geofluid of an ORC binary power plant."""
+        """Compute geofluid consumption.
+
+        Args:
+            T (float): power plant inlet temperature in deg C.
+            T_amb (float): ambient temperautre in deg C.
+
+        Returns:
+            float: power plant output in MWh/kg.
+        """
         
         thermal_exergy = self.compute_thermalexergy(T, T_amb)
         if (T_amb < 15.):
@@ -123,6 +188,16 @@ class ORCPowerPlant(BasePowerPlant):
         return power_output_MWh_kg #MWh/kg
     
     def compute_injection_temp(self, T, T_amb):
+        """Compute injection temperature.
+
+        Args:
+            T (float): power plant inlet temperature in deg C.
+            T_amb (float): ambient temperautre in deg C.
+
+        Returns:
+            float: power plant condenser outlet temperature in deg C.
+        """
+
         """Compute the exiting (reinjection) water temperature of an ORC binary power plant."""
         
         if (T_amb < 15.):
@@ -146,11 +221,26 @@ class ORCPowerPlant(BasePowerPlant):
 class FlashPowerPlant(BasePowerPlant):
     """Single Flash Binary power plant."""
     def __init__(self, ppc, Tres, cf=1.0):
-        """Define attributes for the FlashPowerPlant class."""
+         """Define attributes for the BasePowerPlant class.
+
+        Args:
+            ppc (float): power plant nameplate capacity in MW.
+            Tres (float): reservoir temperature in deg C.
+            cf (float): capacity factor. Defualts to 1.
+        """
+
         super(FlashPowerPlant, self).__init__(ppc, Tres, cf)
         
     def compute_cplant(self, MaxProducedTemperature):
-        """Compute cost of a single flash binary power plant."""
+        """Compute power plant capex.
+
+        Args:
+            MaxProducedTemperature (float): maximum produced geofluid temperature in deg C.
+
+        Returns:
+            float: cost of power plant in USD/kW
+        """
+
         if self.ppc < 10:
             C2 = 4.8472E-2 
             C1 = -35.2186
@@ -205,7 +295,15 @@ class FlashPowerPlant(BasePowerPlant):
         return Cplantcorrelation
     
     def compute_geofluid_consumption(self, T, T_amb):
-        """Compute the power output in MWh electricity per kg geofluid of a single flash binary power plant."""
+        """Compute geofluid consumption.
+
+        Args:
+            T (float): power plant inlet temperature in deg C.
+            T_amb (float): ambient temperautre in deg C.
+
+        Returns:
+            float: power plant output in MWh/kg.
+        """
 
         thermal_exergy = self.compute_thermalexergy(T, T_amb)
         if (T_amb < 15.):
@@ -233,7 +331,18 @@ class FlashPowerPlant(BasePowerPlant):
         return power_output_MWh_kg #MWh/kg
     
     def compute_injection_temp(self, T, T_amb):
-        """Compute the exiting (reinjection) water temperature of a single flash power plant."""
+        """Compute injection temperature.
+
+        Args:
+            T (float): power plant inlet temperature in deg C.
+            T_amb (float): ambient temperautre in deg C.
+
+        Returns:
+            float: power plant condenser outlet temperature in deg C.
+        """
+
+        """Compute the exiting (reinjection) water temperature of an ORC binary power plant."""
+        
         
         if (T_amb < 15.):
             C2 = -1.11519E-3

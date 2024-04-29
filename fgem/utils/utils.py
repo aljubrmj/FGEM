@@ -1,12 +1,5 @@
 import os
 import sys
-
-PROJECT_ROOT = os.path.abspath(os.path.join(
-                  os.path.dirname(__file__), 
-                  os.pardir)
-)
-sys.path.append(PROJECT_ROOT)
-
 import math
 import numpy as np
 import numpy_financial as npf
@@ -43,11 +36,15 @@ class FastXsteam(object):
     
     """Faster corrleations for Steam Tables."""
     
-    def __init__(self, T_max=300, timesteps=30000):
+    def __init__(self, T_max=300, steps=30000):
+        """Initiate class for fast Xsteam tables.
+
+        Args:
+            T_max (int, optional): maximum temperature. Defaults to 300.
+            steps (int, optional): number of steps. Defaults to 30000.
+        """
         
-        """Define attributes for FastXsteam class."""
-        
-        self.xdata = np.linspace(1, T_max, timesteps)
+        self.xdata = np.linspace(1, T_max, steps)
         self.tc = 647.096 #K
         
         ydata = [steamTable.hL_t(x) for x in self.xdata]
@@ -61,78 +58,126 @@ class FastXsteam(object):
         
         
     def func_hl(self, t, a, b, c, d, e):
-        """Liquid enthalpy correlation."""
+        """Liquid enthalpy correlation.
+
+        Args:
+            t (float): temperature in C
+            a (float): correlation coefficient.
+            b (float): correlation coefficient.
+            c (float): correlation coefficient.
+            d (float): correlation coefficient.
+            e (float): correlation coefficient.
+
+        Returns:
+            float: liquid enthalpy in kJ/kg at the given temperature
+        """
         tr = (t+273.15)/self.tc
         return (a + b * np.log(1/tr)**0.35 + c/tr**2 + d/tr**3 + e/tr**4)
+
     def func_hv(self, t, a, b, c, d, e):
-        """Vapor enthalpy correlation."""
+        """Vapor enthalpy correlation.
+
+        Args:
+            t (float): temperature in C
+            a (float): correlation coefficient.
+            b (float): correlation coefficient.
+            c (float): correlation coefficient.
+            d (float): correlation coefficient.
+            e (float): correlation coefficient.
+
+        Returns:
+            float: vapor enthalpy in kJ/kg at the given temperature
+        """
+
         tr = (t+273.15)/self.tc
         return (a + b * np.log(1/tr)**0.35 + c/tr**2 + d/tr**3 + e/tr**4)**(1/2)
+
     def func_vl(self, t, a, b, c, d, e):
-        """Liquid specific volume calculator."""
+        """Liquid specific volume correlation.
+
+        Args:
+            t (float): temperature in C
+            a (float): correlation coefficient.
+            b (float): correlation coefficient.
+            c (float): correlation coefficient.
+            d (float): correlation coefficient.
+            e (float): correlation coefficient.
+
+        Returns:
+            float: liquid specific volume in m3/kg at the given temperature
+        """
+
         tr = (t+273.15)/self.tc
         return (a + b * np.log(1/tr)**0.35 + c/tr**2 + d/tr**3 + e/tr**4)
+
     def func_vv(self, t, a, b, c, d, e):
-        """Vapor specific volume calculator."""
+        """Vapor specific volume correlation.
+
+        Args:
+            t (float): temperature in C
+            a (float): correlation coefficient.
+            b (float): correlation coefficient.
+            c (float): correlation coefficient.
+            d (float): correlation coefficient.
+            e (float): correlation coefficient.
+
+        Returns:
+            float: vapor specific volume in m3/kg at the given temperature
+        """
+
         tr = (t+273.15)/self.tc
         return np.exp((a + b * np.log(1/tr)**0.35 + c/tr**2 + d/tr**3 + e/tr**4))
 
     def hL_t(self, t):
-        """Liquid enthalpy correlation."""
+        """Liquid enthalpy correlation.
+
+        Args:
+            t (float): temperature in C
+
+        Returns:
+            float: liquid enthalpy in kJ/kg at the given temperature
+        """
         t = t[0] if isinstance(t, np.ndarray) else t
         return self.func_hl(t, *self.popt_hl)
         
     def hV_t(self, t):
-        """Vapor enthalpy correlation."""
+        """Vapor enthalpy correlation.
+
+        Args:
+            t (float): temperature in C
+
+        Returns:
+            float: vapor enthalpy in kJ/kg at the given temperature
+        """
+
         t = t[0] if isinstance(t, np.ndarray) else t
         return self.func_hv(t, *self.popt_hv)
 
     def vL_t(self, t):
-        """Liquid specific volume calculator."""
+        """Liquid specific volume correlation.
+
+        Args:
+            t (float): temperature in C
+
+        Returns:
+            float: liquid specific volume in m3/kg at the given temperature
+        """
+
         t = t[0] if isinstance(t, np.ndarray) else t
         return self.func_vl(t, *self.popt_vl)
     
     def vV_t(self, t):
-        """Vapor specific volume calculator."""
+        """Vapor specific volume correlation.
+
+        Args:
+            t (float): temperature in C
+
+        Returns:
+            float: vapor specific volume in m3/kg at the given temperature
+        """
+
         t = t[0] if isinstance(t, np.ndarray) else t
         return self.func_vv(t, *self.popt_vv)
-
-
-def plot_cols(dfs, 
-              span,
-              quantities, 
-              figsize=(10,10),
-              xlabel="World Time",
-              legend_loc="lower right",
-              format_yticks=True,
-              dpi=100,
-              colors=colors):
-    
-    """Plotting of dataframe columns (specifically suitable for time-series headers)."""
-    
-    fig, axes = plt.subplots(len(quantities), 1, figsize=figsize, sharex=True, dpi=dpi)
-
-    df_plots = [df.iloc[span].copy() for df in dfs.values()]
-
-    for k, df_plot in enumerate(df_plots):
-        counter = 0
-        for i, q in enumerate(quantities):
-            if format_yticks:
-                axes[i].yaxis.set_major_formatter(FormatStrFormatter('%.0f'))
-            q = q if isinstance(q, list) else [q]
-            for col in q:
-                if all([qi in df_plot.columns for qi in q]):
-                    axes[i].plot(df_plot.index, df_plot[col], color=colors[counter], linestyle=linestyles[k])
-                counter += 1
-                if legend_loc:
-                    axes[i].legend(q, loc=legend_loc)
-    
-    if len(dfs.keys()) > 1:
-        axes[0].set_title("\n".join([f"{k}: {linestyles[i]}" for i, k in enumerate(dfs.keys())]))
-    else:
-        axes[0].set_title(list(dfs.keys())[0])
-    axes[i].set_xlabel(xlabel)
-    plt.show()
 
 def plot_ex(worlds,
             figsize=(10,10),
@@ -140,8 +185,18 @@ def plot_ex(worlds,
             colors=colors,
             fontsize=10
                ):
-    
-    """Create pie chart plots for capital and operational expenditure."""
+    """Visualize expenditure of multiple projects. 
+
+    Args:
+        worlds (dict): projects or worlds to visualize
+        figsize (tuple, optional): figure size. Defaults to (10,10).
+        dpi (int, optional): figure dpi resolution. Defaults to 150.
+        colors (list, optional): list of colors to be used. Defaults to seaborn.color_palette().
+        fontsize (int, optional): font size. Defaults to 10.
+
+    Returns:
+        matplotlib.figure.Figure: figure object
+    """
     
     fig, axes = plt.subplots(1, len(worlds), figsize=figsize, dpi=dpi)
     axes = [axes] if len(worlds) == 1 else axes
@@ -166,156 +221,15 @@ def plot_ex(worlds,
                 loc="center left",
                 bbox_to_anchor=(0.3, 0.6, 0.0, 1))
 
-    plt.show()
+    return fig
 
-def prepare_tabular_world(world):
-    
-    """Create a tabular version of the world environment based on historical/forecast market/weather data."""
-    
-    df_market = world.market.df.copy()
-    df_market = df_market[(df_market.year >= world.start_year) & (df_market.year < world.end_year)].copy()
-    df_market["capacity_price"] = df_market["year"].apply(lambda t: world.market.get_capacity_price(t))
-    df_market["battery_elcc"] = df_market["year"].apply(
-        lambda t: world.market.get_elcc(t, world.battery_duration[int(t-world.start_year > world.battery_lifetime)]) if world.battery else 0.0)
-    df_weather = pd.DataFrame(np.tile(world.weather.df.values, (world.L, 1)), columns = world.weather.df.columns)
-    df_market["T0"] = df_weather["T0"].values
-
-    return df_market
-
-def geothermal_trader(world,
-                      m_prd,
-                      m_inj,
-                      m_g,
-                      m_tes_ins,
-                      m_tes_outs,
-                      p_bat_ins,
-                      p_bat_outs,
-                      disable_tqdm=True):
-    
-    """Demonstration of how to use the world environment to flexibly control thermal/battery storage facilities."""
-    
-    world._reset()
-
-    df_L = prepare_tabular_world(world)
-    
-    for i, (market_date, row) in tqdm(enumerate(df_L.iterrows()), total=len(df_L), disable=disable_tqdm):
-
-        # Skip first step as a warmup
-        if i == 0:
-            continue
-        
-        timestep = row["TimeDiff"]
-        timestep_sec = timestep.seconds
-        timestep_hr = timestep_sec/3600
-
-        # Constrained TES
-        m_tes_in, m_tes_out = m_tes_ins[i], m_tes_outs[i]
-        
-        if world.st:
-            power_output_MWh_kg = world.pp.compute_power_output(world.reservoir.T_prd.mean(), row["T0"])
-            leftover_ppcap_kg = max(0, world.ppc / power_output_MWh_kg /3600 - m_g)
-        
-            m_tes_in = max(min(m_tes_in, m_g, world.st.mass_max_charge/timestep_sec), 0)
-            m_tes_out = max(min(m_tes_out, leftover_ppcap_kg, world.st.mass_max_discharge/timestep_sec), 0)
-
-        else:
-            m_tes_in, m_tes_out = 0.0, 0.0
-        
-        # Constrained Battery
-        m_wh_to_turbine = m_g - m_tes_in
-        m_turbine = m_wh_to_turbine + m_tes_out
-        p_bat_in, p_bat_out = p_bat_ins[i], p_bat_outs[i]
-        if world.battery:
-            _, wh_power_output_MWe, _, _, _= world.pp.power_plant_outputs(timestep, 
-                                                                        m_turbine, 
-                                                                        m_wh_to_turbine, 
-                                                                        m_tes_out,
-                                                                        world.reservoir.T_prd.mean(), 
-                                                                        world.st.Tw if world.st else 100, 
-                                                                        row["T0"])
-            empty_battery_capacity = (world.battery.energy_capacity - world.battery.energy_content) / timestep_hr
-            content_battery_capacity = world.battery.energy_content / timestep_hr
-            battery_power_capacity = world.battery.power_capacity
-            p_bat_in = max(min(p_bat_in, wh_power_output_MWe, empty_battery_capacity, battery_power_capacity), 0)
-            p_bat_out = max(min(p_bat_out, content_battery_capacity, battery_power_capacity), 0)
-            
-        else:
-            p_bat_in, p_bat_out = 0.0, 0.0
-        
-        # Step World
-        power_output_MWe, power_generation_MWh, T_inj = world.step(timestep, row, 
-                                                                    m_prd, m_inj, 
-                                                                    m_tes_in, m_tes_out,
-                                                                    p_bat_in, p_bat_out)
-        # Record World
-        world.record_step()
-        
-        # if world.st.Tw < 150:
-        #     pdb.set_trace()
-
-    df_records = pd.DataFrame.from_dict(world.records).set_index("World Time")
-
-    if world.battery:
-        df_records["WoG Charge Cost [$MM]"] = df_records["Bat Charge [MWe]"] * df_records["LMP [$/MWh]"]/1e6
-        df_records["WoG Wholesale Revenue [$MM]"] = df_records["Bat Discharge [MWe]"] * df_records["LMP [$/MWh]"]/1e6
-        df_records["WoG Capacity Revenue [$MM]"] = df_records["Battery Capacity Revenue [$MM]"]
-
-    df_annual = df_records.groupby('Year').sum()
-    df_annual["WG CAPEX [$MM]"] = world.capex_total
-    df_annual["WG OPEX [$MM]"] = world.opex_total
-    df_annual["WoG CAPEX [$MM]"] = world.capex["Battery"]
-    df_annual["WoG OPEX [$MM]"] = world.opex["Battery"]
-
-    df_annual["WG Cashin [$MM]"] = df_annual["Revenue [$MM]"]
-    df_annual["WG Cashout [$MM]"] = df_annual["WG OPEX [$MM]"] + df_annual["WG CAPEX [$MM]"]
-    df_annual["WG Cashflow [$MM]"] = df_annual["WG Cashin [$MM]"] - df_annual["WG Cashout [$MM]"]
-    # Additional battery calculations
-    if world.battery:
-        df_annual["WoG Cashin [$MM]"] = df_annual["WoG Wholesale Revenue [$MM]"] + df_annual["WoG Capacity Revenue [$MM]"]
-        df_annual["WoG Cashout [$MM]"] = df_annual["WoG Charge Cost [$MM]"] + df_annual["WoG OPEX [$MM]"] + df_annual["WoG CAPEX [$MM]"]
-        df_annual["WoG Cashflow [$MM]"] = df_annual["WoG Cashin [$MM]"] - df_annual["WoG Cashout [$MM]"]
-    
-    years = np.arange(world.L)
-    df_annual = df_annual.div((1 + world.d)**years, axis=0)
-    df_annual["WG NPV [$MM]"] = df_annual["WG Cashflow [$MM]"].cumsum()
-    df_annual["WG Revenue [$MM]"] = df_annual["WG Cashin [$MM]"].cumsum()
-    df_annual["WG Cost [$MM]"] = df_annual["WG Cashout [$MM]"].cumsum()
-    df_annual["WG Cum CAPEX [$MM]"] = df_annual["WG CAPEX [$MM]"].cumsum()
-    df_annual["WG Cum OPEX [$MM]"] = df_annual["WG OPEX [$MM]"].cumsum()
-    df_annual["WG ROI [%]"] = ((df_annual["WG Cashin [$MM]"] - df_annual["WG OPEX [$MM]"])/df_annual["WG CAPEX [$MM]"].sum()).cumsum() * 100
-    
-    if world.battery:
-        df_annual["WoG NPV [$MM]"] = df_annual["WoG Cashflow [$MM]"].cumsum()
-        df_annual["WoG Revenue [$MM]"] = df_annual["WoG Cashin [$MM]"].cumsum()
-        df_annual["WoG Cost [$MM]"] = df_annual["WoG Cashout [$MM]"].cumsum()
-        df_annual["WoG Cum CAPEX [$MM]"] = df_annual["WoG CAPEX [$MM]"].cumsum()
-        df_annual["WoG ROI [%]"] = ((df_annual["WoG Cashin [$MM]"] - df_annual["WoG OPEX [$MM]"])/df_annual["WoG CAPEX [$MM]"].sum()).cumsum() * 100
-   
-    NPV = df_annual["WG NPV [$MM]"].iloc[-1]
-    Revenue = df_annual["WG Revenue [$MM]"].iloc[-1]
-    CAPEX = df_annual["WG Cum CAPEX [$MM]"].iloc[-1]
-    Net_Income = NPV + CAPEX
-    ROI = df_annual["WG ROI [%]"].iloc[-1]
-
-    return NPV, Revenue, CAPEX, Net_Income, ROI, [], df_records, df_annual
-
-def check_conv(in_size, kernels, strides, pads):
-    
-    """Check a convolutional layer has the right size."""
-    
-    h = in_size
-    for k, s, p in zip(kernels, strides, pads):
-        h = (h - k + 2 * p)//s + 1
-        print(h)
-    return h
-
-def plot_cols_v2(dfs,
+def plot_cols(dfs,
               span,
               quantities, 
               figsize=(10,10),
               xlabel="World Time",
               ylabels=None,
-              ylogscale=None,
+              ylogscale=False,
               use_title=True,
               legend_loc="lower right",
               manual_legends=None,
@@ -323,11 +237,31 @@ def plot_cols_v2(dfs,
               use_linestyles=True,
               blackout_first=False,
               formattime = False,
-              dpi=100,
-              return_figax=False):
-    
-    """A more involved version of plotting columns of a dataframe (specifically made for time-series headers)."""
-    
+              dpi=100):
+    """Visualize columns of a dataframe.
+
+    Args:
+        dfs (dict): dictionary of dataframes to plot with key as names.
+        span (Union[range, list]): range of indices to plot.
+        quantities (list): dataframe columns to plot.
+        figsize (tuple, optional): figure size. Defaults to (10,10).
+        xlabel (str, optional): label of the x axis. Defaults to "World Time".
+        ylabels (list, optional): labels of the y axes. Defaults to None.
+        ylogscale (bool, optional): whether or not to use log-scale on the y axis. Defaults to False.
+        use_title (bool, optional): whether or not to use a figure title. Defaults to True.
+        legend_loc (str, optional): legend location. Defaults to "lower right".
+        manual_legends (list, optional): list to override default legends. Defaults to None.
+        color_per_col (bool, optional): whether or not to assign one color to each column. Defaults to True.
+        use_linestyles (bool, optional): whether or not to use linestyles. If False, all quantities are plotted with solid linestyle. Defaults to True.
+        blackout_first (bool, optional): whether or not to plot the very first quantity in black color. Defaults to False.
+        formattime (bool, optional): whether or not to apply time formatting. Defaults to False.
+        dpi (int, optional): figure dpi resolution. Defaults to 100.
+
+    Returns:
+        matplotlib.figure.Figure: figure object
+
+    """
+
     fig, axes = plt.subplots(len(quantities), 1, figsize=figsize, sharex=True, dpi=dpi)
 
     df_plots = [df.iloc[span].copy() for df in dfs.values()]
@@ -374,11 +308,16 @@ def plot_cols_v2(dfs,
     
     plt.show()
 
-    if return_figax:
-        return fig, axes
+    return fig
+
 def viz_wholesale(filepath, span=range(2025,2056,2)):
-    
-    """Visualize wholesale market data."""
+    """Visualize wholesale market data.
+
+    Args:
+        filepath (str): file path to csv file.
+        span (range, optional): range or list of years to visualize. Defaults to range(2025,2056,2).
+    """
+
     
     if isinstance(filepath, str):    
         df = pd.read_csv(filepath)
@@ -399,8 +338,7 @@ def preprocess_cambium_capacity(scenario, state, infl,
                                 base_year=2023, span=range(2024,2061), 
                                 plot=False, dst_dir='.', save=None, adjustment=0,
                                 states_with_no_capacity_market = ["TX"]):
-
-    """Preprocess and plot Cambium capacity market data for a chosen state and forecast scenario."""
+    """Preprocess and plot Cambium capacity market data for a chosen state and forecast scenario"""
     
     filepath = f"../../Cambium_2022/{scenario}/Cambium22_{scenario}_annual_state.csv"
     df = pd.read_csv(filepath, header=5)
@@ -558,8 +496,15 @@ def viz_trial_logs(trial_dir, quantities, span=2000, figsize=(10,10)):
     plt.show()
     
 def compute_f(Rewaterprod, well_diam):
-    
-    """Compute f3 constant to be used for determining Reynold's number."""
+    """Compute Darcy friction coefficient.
+
+    Args:
+        Rewaterprod (Union[ndarray, float]): Reynold's number
+        well_diam (Union[ndarray, float]): well diameter
+
+    Returns:
+        Union[ndarray, float]: Darcy friction factor
+    """
 
     relroughness = 1e-4/well_diam
     f = 1./np.power(-2*np.log10(relroughness/3.7+5.74/np.power(Rewaterprod,0.9)),2.)
@@ -574,46 +519,44 @@ def compute_f(Rewaterprod, well_diam):
     
     return f
 
-# def compute_f1(Rewaterinj, well_diam):
-    
-#     """Compute f1 constant to be used for determining Reynold's number."""
-    
-#     if Rewaterinj < 2300. : #laminar flow
-#         f1 = 64./nonzero(Rewaterinj)
-#     else: #turbulent flow
-#         relroughness = 1e-4/well_diam
-#         f1 = 1./np.power(-2*np.log10(relroughness/3.7+5.74/np.power(Rewaterinj,0.9)),2.)
-#         f1 = 1./np.power((-2*np.log10(relroughness/3.7+2.51/Rewaterinj/np.sqrt(f1))),2.)
-#         f1 = 1./np.power((-2*np.log10(relroughness/3.7+2.51/Rewaterinj/np.sqrt(f1))),2.)
-#         f1 = 1./np.power((-2*np.log10(relroughness/3.7+2.51/Rewaterinj/np.sqrt(f1))),2.)
-#         f1 = 1./np.power((-2*np.log10(relroughness/3.7+2.51/Rewaterinj/np.sqrt(f1))),2.)
-#         f1 = 1./np.power((-2*np.log10(relroughness/3.7+2.51/Rewaterinj/np.sqrt(f1))),2.)  #6 iterations to converge 
-#     return f1
+def densitywater(Twater):
+    """Computationally efficient correlation for water density based on the GEOPHIRES.
 
-def densitywater(Twater): 
+    Args:
+        Twater (Union[ndarray, float]): water temperature in deg C
+
+    Returns:
+        Union[ndarray, float]: water density in kg/m3
+    """
     
-    """Correlation for water density based on the GEOPHIRES tool."""
-    
-    # Based on GEOPHIRES correlations (more stable than XSTEAM)  
     T = Twater+273.15
     rhowater = ( .7983223 + (1.50896E-3 - 2.9104E-6*T) * T) * 1E3 #water density correlation as used in Geophires v1.2 [kg/m3]
     return  rhowater
 
 def viscositywater(Twater):
-    
-    """Correlation for water viscosity based on the GEOPHIRES tool."""
-    
-    # Based on GEOPHIRES correlations (more stable than XSTEAM)
+    """Computationally efficient correlation for water viscosity based on the GEOPHIRES.
+
+    Args:
+        Twater (Union[ndarray, float]): water temperature in deg C
+
+    Returns:
+        Union[ndarray, float]: water viscosity in m2/s
+    """
+
     muwater = 2.414E-5*np.power(10,247.8/(Twater+273.15-140))     #accurate to within 2.5% from 0 to 370 degrees C [Ns/m2]
-    #xp = np.linspace(5,150,30)
-    #fp = np.array([1519.3, 1307.0, 1138.3, 1002.0, 890.2, 797.3, 719.1, 652.7, 596.1, 547.1, 504.4, 467.0, 433.9, 404.6, 378.5, 355.1, 334.1, 315.0, 297.8, 282.1, 267.8, 254.4, 242.3, 231.3, 221.3, 212.0, 203.4, 195.5, 188.2, 181.4])
-    #muwater = np.interp(Twater,xp,fp)
     return muwater
 
 def heatcapacitywater(Twater):
     
-    """Correlation for water heat capacity based on the GEOPHIRES tool."""
-    
+    """Computationally efficient correlation for water specific heat capacity based on the GEOPHIRES.
+
+    Args:
+        Twater (Union[ndarray, float]): water temperature in deg C
+
+    Returns:
+        Union[ndarray, float]: water specific heat capacity in J/kg-K
+    """
+
     # Based on GEOPHIRES correlations (more stable XSTEAM)
     Twater = (Twater + 273.15)/1000
     A = -203.6060
@@ -621,17 +564,22 @@ def heatcapacitywater(Twater):
     C = -3196.413
     D = 2474.455
     E = 3.855326
-    cpwater = (A + B*Twater + C*Twater**2 + D*Twater**3 + E/(Twater**2))/18.02*1000 #water specific heat capacity in J/kg-K
+    cpwater = (A + B*Twater + C*Twater**2 + D*Twater**3 + E/(Twater**2))/18.02*1000
     return cpwater
 
 def vaporpressurewater(Twater): 
-    
-    """Correlation for water vapor pressure based on the GEOPHIRES tool."""
+    """Computationally efficient correlation for vapor pressure based on the GEOPHIRES.
+
+    Args:
+        Twater (Union[ndarray, float]): water temperature in deg C
+
+    Returns:
+        Union[ndarray, float]: vapor pressure in kPa
+    """
     
     return np.where(Twater < 100, 133.322*(10**(8.07131-1730.63/(233.426+Twater)))/1000, 
          133.322*(10**(8.14019-1810.94/(244.485 +Twater)))/1000)
     
-
 def compute_npv(df_records, capex_total, opex_total, baseline_year, L, d, ppa_price=75, ppa_escalaction_rate=0.02):
     
     """Compute NPV and other economic metrics for a completed simulation run."""
@@ -708,7 +656,7 @@ def compute_drilling_cost(well_tvd, well_diam, lateral_length=0, numberoflateral
             return (0.3021*well_tvd**2 + 584.9112*well_tvd + 751368.)*1e-6/1.15
 
 def compute_latlon_distance(lat1, lon1, lat2, lon2):
-    
+
     """Compute Euclidean distance in kilometers based on latlon cooredinates of two locations."""
     
     return np.arccos(np.sin(lat1)*np.sin(lat2)+np.cos(lat1)*np.cos(lat2)*np.cos(lon2-lon1))*6371 #kilometers
@@ -849,9 +797,19 @@ def augustine_eff(tres):
         return 0.22
 
 def nonzero(x, thresh=1E-6):
+    """Ensure input is nonzero
+
+    Args:
+        x (ndarray): input numbers
+        thresh (float, optional): threshold below which numbers are set to zero. Defaults to 1E-6.
+
+    Returns:
+        ndarray: nonzero version of input array
+    """
     return np.maximum(thresh, x)
 
 def grid_bounds(geom, delta):
+    """Create a grid/mesh based on geometry."""
     minx, miny, maxx, maxy = geom.bounds
     nx = int((maxx - minx)/delta)
     ny = int((maxy - miny)/delta)
@@ -864,34 +822,36 @@ def grid_bounds(geom, delta):
     return grid
 
 def partition(geom, delta):
+    """Partition a geometry based on delta value."""
     prepared_geom = prep(geom)
     grid = list(filter(prepared_geom.intersects, grid_bounds(geom, delta)))
     return grid
-
-def clean_bht(df, source):
-    df_temp = df.copy()
-    df_temp = df_temp[(df_temp.lat<US_LATMAX)&(df_temp.lat>US_LATMIN)&(df_temp.lon<US_LONMAX)&(df_temp.lon>US_LONMIN)]
-    df_temp.reset_index(drop=True, inplace=True)
-    df_temp["Source"] = source
-    df_temp = df_temp[df_temp.state.apply(lambda x: x is not None)].reset_index(drop=True)
-    df_temp["geometry"] = gpd.points_from_xy(df_temp.lon, df_temp.lat)
-    df_temp = gpd.GeoDataFrame(df_temp, geometry='geometry', crs="4326")
-    df_temp = df_temp.to_crs(crs=UNIFIED_CRS)
-
-    return df_temp
-
-def plot_hist(df_temp, cols=["Depth", "BHT"], color="g"):
-    axes = df_temp.hist(cols, color=color, figsize=(15,4), sharey=True);
-    for ax in axes.squeeze():
-        ax.set_ylabel("Count", fontsize=12)
         
 def harrison(z):
+    """Harrison temperature correction.
+
+    Args:
+        z (ndarray): true vertical depth in meters
+
+    Returns:
+        ndarray: harrison correction in deg C
+    """
     return -2.3449e-6 * z**2 + 0.018268 * z - 16.512
 
 def forster(z):
+    """Forster temperature correction.
+
+    Args:
+        z (ndarray): true vertical depth in meters
+
+    Returns:
+        ndarray: forster correction in deg C
+    """
     return 0.017*z - 6.58
 
 def retrieve_weather(lat, lon, year, station_idx_limit=10):
+    """Retrieve weather."""
+
     # Set time period
     findtz = TimezoneFinder()
     findstations = Stations()
@@ -921,43 +881,5 @@ def retrieve_weather(lat, lon, year, station_idx_limit=10):
     
     return data
 
-def plot_map(df, feature, cmap="Spectral_r", vmax=None, vmin=None, categorical=False, markersize=1):
-    fig, ax = plt.subplots(1, 1, figsize=(20,20), dpi=100)
-    divider = make_axes_locatable(ax)
-    cax = divider.append_axes("right", size="3%", pad=-0.25)
-    cax.set_title(feature, pad=10, fontsize=18)
-    cax.yaxis.set_major_formatter(StrMethodFormatter('{x:,.0f}'));
-    df.plot(feature, cmap=cmap, legend=True, markersize=markersize, ax=ax, cax=cax, vmax=vmax, vmin=vmin, categorical=categorical);
-    states.boundary.plot(ax=ax, color='black', edgecolor='black', alpha=1.0, linewidth=0.5);
-    
-    for l in cax.yaxis.get_ticklabels():
-        l.set_fontsize(14)
-
-    ax.tick_params(
-        axis='both', bottom=False, left=False,
-        labelbottom=False, labelleft=False)
-
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.spines['bottom'].set_visible(False)
-    ax.spines['left'].set_visible(False);
-    return fig
-
-def constant_strategy(project, mass_flow=100):
-    """Constant change producer mass flow rates"""
-    m_prd = np.array(project.num_prd*[mass_flow]).astype(float)
-    m_inj = np.array(project.num_inj*[m_prd.sum()/project.num_inj]).astype(float)
-    return m_prd, m_inj
-
-def maximal_power_generation_strategy(project, max_mass_flow=200):
-    """Control wells to maintain a constant power plant output"""
-    power_output_MWh_kg = project.pp.power_output_MWh_kg# project.pp.compute_geofluid_consumption(project.reservoir.T_prd_wh.mean(), project.state.T0)
-    required_mass_flow_per_well = project.ppc / (power_output_MWh_kg * 3600 * project.num_prd + SMALL_NUM)
-
-    m_prd = np.minimum(max_mass_flow, np.array(project.num_prd*[required_mass_flow_per_well])).astype(float)
-    m_inj = np.array(project.num_inj*[m_prd.sum()/project.num_inj]).astype(float)
-
-    return m_prd, m_inj
-    
 if __name__ == "__main__":
     pass

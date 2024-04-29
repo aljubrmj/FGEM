@@ -25,8 +25,16 @@ class LiIonBattery:
 				 roundtrip_eff=0.90,
 				 lifetime=20,
 				 timestep=timedelta(hours=1)):
+		"""Intiating attributes for LiIonBattery calss, assuming that a second battery is installed after the first dies.
 
-		"""Intiating attributes for LiIonBattery calss."""
+		Args:
+			time_init (datetime): initial timestamp.
+			duration (list, optional): battery duration in hours (including two batteries, where the second is installed after the first dies). Defaults to [4,4].
+			power_capacity (list, optional): battery power capacity in MW (including two batteries, where the second is installed after the first dies). Defaults to [5,5].
+			roundtrip_eff (float, optional): battery roundtrip efficiency (fraction). Defaults to 0.90.
+			lifetime (int, optional): battery lifetime in years. Defaults to 20.
+			timestep (datetime.timedelta, optional): simulation timestep size. Defaults to timedelta(hours=1).
+		"""
 		
 		self.time_init = time_init
 		self.start_year = time_init.year
@@ -48,8 +56,15 @@ class LiIonBattery:
 			 p_bat_in=0,
              p_bat_out=0
 			 ):
+		"""Stepping energy storage unit over time.
 
-		"""Stepping energy storage unit over time."""
+		Args:
+			p_bat_in (float, optional): power charge into the battery in MW. Defaults to 0.
+			p_bat_out (float, optional): power discharge from the battery in MW. Defaults to 0.
+
+		Returns:
+			bool: whether or not the input arguments resulted in a violation of battery specs that was overwirrden.
+		"""
 
 		violation = False
   
@@ -72,7 +87,8 @@ class LiIonBattery:
 
 		self.energy_content += (p_bat_in - p_bat_out) * self.timestep.total_seconds()/3600 # MWhe
 		self.SOC = self.energy_content/ (self.energy_capacity+1e-3) * 100 #%
-		return violation
+
+		return p_bat_out, p_bat_in, violation
 		
 class TES:
 
@@ -90,6 +106,22 @@ class TES:
 				 Tamb=20,
 				 max_thresh=0.95,
 				 timestep=timedelta(hours=1)):
+
+		"""Initiate thermal energy storage tank.
+
+		Args:
+			time_init (datetime): initial timestamp.
+			Vw (float, optional): initial water volume in tank in m3. Defaults to 250.
+			Tw (float, optional): initial water temperature in tank in deg C . Defaults to 40.
+			pressurized_tank (bool, optional): whether or not to assume a pressurized tank. Defaults to False.
+			d (float, optional): tank diameter in meters. Defaults to 34.
+			H (float, optional): tank height in meters. Defaults to 13.
+			Lst (float, optional): steel thickness in meters. Defaults to 0.08.
+			Lins (float, optional): insulation layer thickenss in meters. Defaults to 0.05.
+			Tamb (float, optional): ambient temperature in deg C. Defaults to 20.
+			max_thresh (float, optional): maximum fill fraction of tank volume. Defaults to 0.95.
+			timestep (datetime.timedelta, optional): simulation timestep size. Defaults to timedelta(hours=1).
+		"""
 
 		self.time_init = time_init
 		self.time_curr = time_init
@@ -121,7 +153,10 @@ class TES:
 
 	def initiate_tank_contents(self, Vw):
      
-		"""Initiating the storage tank contents of liquid and steam."""
+		"""Initiating the storage tank contents of liquid and steam.
+			Args:
+				Vw (float): water volume in m3.
+		"""
   
 		# if Vw input is fraction, then it is portion of VTank
 		self.Vw = Vw*self.VTank if Vw < 1.0 else Vw
@@ -150,8 +185,15 @@ class TES:
 				 h=13,
 				 emmissivity=1.0,
 				 sig=5.67e-8):
+		"""Estimating heat loss in the thermal water tank.
 
-		"""Estimating heat loss in the thermal water tank."""
+		Args:
+			kst (float, optional): thermal conductivity of steel layer in W/m-K. Defaults to 45.
+			kins (float, optional): thermal conductivity of insulation layer in W/m-K . Defaults to 0.17.
+			h (float, optional): convective heat coefficient in W/m2-K. Defaults to 13.
+			emmissivity (float, optional): emissivitiy. Defaults to 1.0.
+			sig (float, optional): Stefan-Boltzmann constant in kg/s3-K4. Defaults to 5.67e-8.
+		"""
 
 		Th = self.Tw + 273.15
 		Tamb = self.Tamb + 273.15
@@ -190,13 +232,22 @@ class TES:
 					 m_in,
 					 m_out,
 					 TWH):
+		"""Solving for mass and energy conservation over a timestep.
 
-		"""Solving for mass and energy conservation over a timestep."""
+		Args:
+			m_in (_type_): mass flow rate into the tank in kg/s.
+			m_out (_type_): mass flow rate out of the tank in kg/s.
+			TWH (_type_): temperature of water flowing into the tank in deg C.
+
+		Returns:
+			float, float, bool: inflow and outflow tank mass flow rates after being overriden in case they resulted in violation of the thermal energy storage tank specs and conditions. A third output is returned to indicate if a violation happened.
+		"""
 
 		self.massw = (self.massv + self.massl + m_in - m_out)
-		
+		violation = self.massw < 0
+
 		# Ensure no excessive discharge and reset using threshold of 0.x
-		if self.massw < 0:
+		if violation:
 			# m_in = m_out
 			m_out = 0.75 * (self.massv + self.massl + m_in)
 			self.massw = (self.massv + self.massl + m_in - m_out)
@@ -240,23 +291,32 @@ class TES:
 		self.mass_max_discharge = max((self.Vl - self.V_limits)*self.rhol, 0.0)
 		self.conservation_errors = 0
 
-		return m_in, m_out
+		return m_in, m_out, violation
 
 	def step(self,
 			 T_amb,
 			 m_tes_in,
 			 m_tes_out,
-			 T_in
+			 TWH
 			 ):
+		"""Stepping the thermal water tank over time.
 
-		"""Stepping the thermal water tank over time."""
+		Args:
+			T_amb (float): ambient temperautre in deg C.
+			m_tes_in (float): mass flow rate into the tank in kg/s.
+			m_tes_out (float): mass flow rate out of the tank in kg/s.
+			TWH (float): temperature of fluid incoming into the tank in deg C.
+
+		Returns:
+			float, float, bool: inflow and outflow tank mass flow rates after being overriden in case they resulted in violation of the thermal energy storage tank specs and conditions. A third output is returned to indicate if a violation happened.
+		"""
 
 		self.time_curr += self.timestep
 		self.T_amb = T_amb
 		timestep_seconds = self.timestep.total_seconds()
 		self.heatloss()
-		m_in, m_out = self.conservation(m_tes_in * timestep_seconds, m_tes_out * timestep_seconds, T_in)
+		m_in, m_out, violation = self.conservation(m_tes_in * timestep_seconds, m_tes_out * timestep_seconds, TWH)
 		m_tes_in, m_tes_out = m_in/timestep_seconds, m_out/timestep_seconds
-		return m_tes_in, m_tes_out
+		return m_tes_in, m_tes_out, violation
 		
 

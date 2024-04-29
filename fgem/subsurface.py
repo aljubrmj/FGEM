@@ -5,6 +5,9 @@ import numpy as np
 import pdb
 from copy import deepcopy
 import matplotlib.pyplot as plt
+from matplotlib.collections import PolyCollection
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+import matplotlib.patches as mpatches
 from pyXSteam.XSteam import XSteam
 import math
 from scipy import integrate
@@ -37,16 +40,46 @@ class BaseReservoir(object):
         		 rhorock=2700,
            		 cprock=1000,
               	 impedance = 0.1,
-                 thickness=200, #m
-                 PI = 20, # kg/s/bar
-                 II = 20, # kg/s/bar
+                 res_thickness=200,
+                 PI = 20,
+                 II = 20,
                  SSR = 1.0,
-                 N_ramey_mv_avg=168, # hrs, 1 week worth of accumulation
+                 N_ramey_mv_avg=168,
                  FAST_MODE={"on": False, "period": 3600*8760/12},
 				 PumpingModel="OpenLoop",
 				 timestep=timedelta(hours=1)
                  ):
-		"""Define attributes of the Subsurface class."""
+		"""Initialize base reservoir class.
+
+		Args:
+			Tres_init (float): initial reservoir temperature in deg C.
+			geothermal_gradient (float): average geothermal gradient in deg C/km.
+			surface_temp (float): surface temperature in deg C.
+			L (float): project lifetime in years.
+			time_init (datetime): initial time.
+			well_depth (float): well depth in meters.
+			prd_well_diam (float): production well diameter in meters.
+			inj_well_diam (float): injection well diameter in meters.
+			num_prd (int): number of producers.
+			num_inj (int): number of injectors.
+			waterloss (float): fraction of injected water that is lost to the reservoir (fraction).
+			power_plant_type (str): type of power plant (either "Binary" or "Flash").
+			pumpeff (float): pump efficiency (fraction).
+			ramey (bool, optional): whether or not to use ramey's model for wellbore heat loss/gain. Defaults to True.
+			pumping (bool, optional): whther or not to account for parasitic losses due to pumping requirements. Defaults to True.
+			krock (float, optional): rock thermal conductivity in W/C-m. Defaults to 3.
+			rhorock (float, optional): rock bulk density in kg/m3. Defaults to 2700.
+			cprock (float, optional): rock heat capacity in J/kg-K. Defaults to 1000.
+			impedance (float, optional): reservoir pressure losses when using an impendance model. Defaults to 0.1.
+			res_thickness (float, optional): reservoir thickness in meters. Defaults to 200.
+			PI (float, optional): productivity index in kg/s/bar. Defaults to 20.
+			II (float, optional): injectivity index in kg/s/bar. Defaults to 20.
+			SSR (float, optional): Stimulation success rate, which is a multiplier used to reduce PI and II when stimulation is not fully successful. Defaults to 1.0.
+			N_ramey_mv_avg (int, optional): number of timesteps used for averaging the f-function when computing ramey's heat losses with variable mass flow rates. Defaults to 168.
+			FAST_MODE (dict, optional): information used to reduce the required timestepping when simulating the reservoir. It comes with keys of "on" to turn it on and "period" to specify the time period needed to pass before the reservoir state is updated, which is aimed at reducing computational requirements in exchange for loss in accuracy. Defaults to {"on": False, "period": 3600*8760/12}.
+			PumpingModel (str, optional): model type used to compute pressure losses (either "OpenLoop" or "ClosedLoop"). Defaults to "OpenLoop".
+			timestep (datetime.timedelta, optional): simulation timestep size. Defaults to timedelta(hours=1).
+		"""
 
 		self.geothermal_gradient = geothermal_gradient
 		self.surface_temp = surface_temp
@@ -56,19 +89,19 @@ class BaseReservoir(object):
 		self.well_depth = well_depth
 		self.num_prd = num_prd
 		self.num_inj = num_inj
-		self.Tres_init = Tres_init #surface_temp + geothermal_gradient * well_depth/1e3
+		self.Tres_init = Tres_init
 		self.Tres = self.Tres_init
 		self.steamtable = XSteam(XSteam.UNIT_SYSTEM_MKS) #m/kg/sec/°C/bar/W
-		self.krock = krock #W/m/K
-		self.rhorock = rhorock #J/kg/K
-		self.cprock = cprock #J/kg/K
-		self.prd_well_diam = prd_well_diam #m
+		self.krock = krock
+		self.rhorock = rhorock
+		self.cprock = cprock
+		self.prd_well_diam = prd_well_diam
 		self.inj_well_diam = inj_well_diam
 		self.alpharock = krock/(rhorock*cprock)
 		self.ramey = ramey
 		self.pumping = pumping
 		self.impedance = impedance
-		self.thickness = thickness
+		self.res_thickness = res_thickness
 		self.PI = SSR * PI if SSR > 0.0 else PI #0.3 Based on GETEM page 61
 		self.II = SSR * II if SSR > 0.0 else II #0.3 Based on GETEM page 61
 		self.waterloss = waterloss
@@ -92,24 +125,68 @@ class BaseReservoir(object):
 		self.T_inj_wh = np.array(self.num_inj*[75], dtype='float')
 		self.T_inj_bh = np.array(self.num_inj*[75], dtype='float')
   
-		#reservoir hydrostatic pressure [kPa] 
+		#reservoir hydrostatic pressure [kPa]
 		self.CP = 4.64E-7
 		self.CT = 9E-4/(30.796*self.Tres_init**(-0.552))
 		self.Phydrostatic = 0+1./self.CP*(math.exp(densitywater(self.surface_temp)*9.81*self.CP/1000*(self.well_depth-self.CT/2*(self.geothermal_gradient/1000)*self.well_depth**2))-1)
 
-		# self.fxsteam = pickle.load(open(os.path.join(FILE_BASE_DIR, 'FastXsteam.pkl'), 'rb'))
-
 	def pre_model(self, t, m_prd, m_inj, T_inj):
+		"""Computations to be performed before stepping the reservoir model.
+
+		Args:
+			t (datetime): current timestamp.
+            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s.
+            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
+			T_inj (float): injection temperature in deg C.
+
+		Raises:
+			NotImplementedError: must be implemented for classes inheriting the BaseReservoir class
+		"""
 		raise NotImplementedError
 
 	def model(self, t, m_prd, m_inj, T_inj):
+		"""Computations to be performed when stepping the reservoir model.
+
+		Args:
+			t (datetime): current timestamp.
+            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s.
+            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
+			T_inj (float): injection temperature in deg C.
+
+		Raises:
+			NotImplementedError: must be implemented for classes inheriting the BaseReservoir class
+		"""
+		raise NotImplementedError
+
+	def configure_well_dimensions(self):
+		"""Configuration specifications of a doublet. It requires the specification of a doublet, including the producer dimensions (self.xprod, self.yprod, self.zprod), injector dimensions (self.xinj, self.yinj, self.zinj) and reservoir vertices (self.verts). See Class PercentageReservoir for example implementation.
+
+		Raises:
+			NotImplementedError: must be implemented for classes inheriting the BaseReservoir class
+		"""
 		raise NotImplementedError
 
 	def pre_wellbore_calculations(self, t, m_prd, m_inj, T_inj, T_amb):
+		"""Computations to be performed before wellbore calculations.
+
+		Args:
+			t (datetime): current timestamp.
+            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s.
+            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
+			T_inj (float): injection temperature in deg C.
+		"""
 		if self.ramey:
 			self.pre_compute_ramey(t, m_prd, m_inj, T_inj, T_amb)
 
 	def wellbore_calculations(self, t, m_prd, m_inj, T_inj, T_amb):
+		"""Wellbore computations.
+
+		Args:
+			t (datetime): current timestamp.
+            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s.
+            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
+			T_inj (float): injection temperature in deg C.
+		"""
 		# Ramey's wellbore heat loss model
 		if self.ramey:
 			self.compute_ramey(t, m_prd, m_inj, T_inj, T_amb)
@@ -127,7 +204,15 @@ class BaseReservoir(object):
 			self.PumpingPower_ideal = 0.0
 	
 	def step(self, m_prd, T_inj, T_amb, m_inj=None):
-		"""Stepping the reservoir and wellbore models."""
+		"""Stepping the reservoir and wellbore models.
+
+		Args:
+            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s.
+			T_inj (float): injection temperature in deg C.
+			T_amb (float): ambient temperature in deg C.
+            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
+		"""
+
 		self.m_prd = m_prd if isinstance(m_prd, np.ndarray) else np.array(self.num_prd * [m_prd])
 		if m_inj is not None:
 			self.m_inj = m_inj if isinstance(m_inj, np.ndarray) else np.array(self.num_inj * [m_inj])
@@ -155,16 +240,32 @@ class BaseReservoir(object):
 		self.wellbore_calculations(self.time_curr, self.m_prd, self.m_inj, T_inj, T_amb)
   
 	def pre_compute_ramey(self, t, m_prd, m_inj, T_inj, T_amb):
+		"""Computations to be performed before Ramey's model calculations.
+
+		Args:
+			t (datetime): current timestamp.
+            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s.
+            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
+			T_inj (float): injection temperature in deg C.
+			T_amb (float): ambient temperature in deg C.
+		"""
+
 		self.m_prd_ramey_mv_avg = ((self.N_ramey_mv_avg-1) * self.m_prd_ramey_mv_avg + m_prd)/self.N_ramey_mv_avg
   
 	def compute_ramey(self, t, m_prd, m_inj, T_inj, T_amb):
+		"""Ramey's model wellbore heat loss/gain.
+
+		Args:
+			t (datetime): current timestamp.
+            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s.
+            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
+			T_inj (float): injection temperature in deg C.
+			T_amb (float): ambient temperature in deg C.
+		"""
      
-		"""Ramey's model."""
-
 		# Producer calculations
-
 		time_seconds = max((t - self.time_init).seconds, 8760*3600) # always assume one year passed across #
-		cpwater = heatcapacitywater(self.T_prd_bh.mean()) # J/kg-degC
+		cpwater = heatcapacitywater(self.T_prd_bh.mean())
 		framey = -np.log(1.1*(self.prd_well_diam/2.)/np.sqrt(4.*self.alpharock*time_seconds))-0.29
 		rameyA = self.m_prd_ramey_mv_avg*cpwater*framey/2/math.pi/self.krock
 
@@ -173,7 +274,7 @@ class BaseReservoir(object):
 		(self.T_prd_bh - self.Tres) * np.exp(-self.well_depth/nonzero(rameyA))
 
 		# Injector calculations
-		cpwater = heatcapacitywater(T_inj)#J/kg-degC
+		cpwater = heatcapacitywater(T_inj)
 		framey = -np.log(1.1*(self.inj_well_diam/2.)/np.sqrt(4.*self.alpharock*time_seconds))-0.29
 		rameyA = m_inj*cpwater*framey/2/math.pi/self.krock
 
@@ -182,8 +283,13 @@ class BaseReservoir(object):
 		(T_inj - self.surface_temp + (self.geothermal_gradient/1000) * rameyA) * np.exp(-self.well_depth/nonzero(rameyA))
   
 	def compute_pumpingpower(self, m_prd, m_inj, T_inj):
-		
-		"""Pumping power calculations."""
+		"""Pumping power calculations.
+
+		Args:
+            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s.
+            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
+			T_inj (float): injection temperature in deg C.
+		"""
 
 		if "closed" in self.PumpingModel.lower():
 			diam = self.radiusvector*2
@@ -195,20 +301,12 @@ class BaseReservoir(object):
 			mu = viscositywater(T)
 
 			v = (m/self.numberoflaterals)*(1.+self.waterloss)/rho/(math.pi/4.*diam**2)
-			Re = 4.*(m/self.numberoflaterals)*(1.+self.waterloss)/(mu*math.pi*diam) #laminar or turbulent flow?
+			Re = 4.*(m/self.numberoflaterals)*(1.+self.waterloss)/(mu*math.pi*diam)
 			f = compute_f(Re, np.array(self.num_inj*[diam]))
 			
 			# Necessary injection wellhead pressure [kPa]
 			self.DPSurfaceplant = 68.95
-			# Pexcess = 344.7 #[kPa] = 50 psi. Excess pressure covers non-condensable gas pressure and net positive suction head for the pump
-			# self.Pprodwellhead = vaporpressurewater(self.T_prd_bh) + Pexcess #[kPa] is minimum production pump inlet pressure and minimum wellhead pressure
-			# Following tip from CLGWG where operational settings allow for no vapor pressure to form:
 			self.Pprodwellhead = 0.0
-
-			# self.DP_flow_inj = self.f1*(self.rhowaterinj*self.vinj**2/2)*(self.well_md/self.inj_well_diam)/1e3
-			# self.DP_flow_prd = self.f3*(self.rhowaterprod*self.vprod**2/2.)*(self.well_md/self.prd_well_diam)/1e3
-			# self.DP_hydro_inj = self.rhowaterinj*9.81*self.well_tvd/1e3
-			# self.DP_hydro_prd = self.rhowaterprod*9.81*self.well_tvd/1e3
 
 			# pressure drop in pipes in parallel is the same, so we average things out
 			self.DP_flow = f*(rho*v**2/2)*(dL/diam)/1e3
@@ -218,14 +316,6 @@ class BaseReservoir(object):
 			self.DP_hydro = rho*9.81*dz/1e3
 			self.DP_hydro = self.DP_hydro[:,:self.interconnections[1]+1].sum() + self.DP_hydro[:,self.interconnections[1]+1:].sum()/self.numberoflaterals
 
-			# self.DP_prd = self.Pprodwellhead + self.DP_flow_prd + self.DP_hydro_prd
-			# self.PumpingPowerProd = self.DP_prd*m_prd/self.rhowaterprod/self.pumpeff/1e3 #[MWe] approximate total pumping power for production side of closed loop system
-			# self.PumpingPowerProd = np.clip(self.PumpingPowerProd, 0, np.inf)
-
-			# self.DP_inj = self.DP_flow_inj - self.DP_hydro_inj - self.DPSurfaceplant
-			# self.PumpingPowerInj = self.DP_inj*m_inj/self.rhowaterinj/self.pumpeff/1e3 #[MWe] approximate total pumping power for injection side of closed loop system
-			# self.PumpingPowerInj = np.clip(self.PumpingPowerInj, 0, np.inf)
-			# self.DP = self.Pprodwellhead + self.DP_flow + self.DP_hydro_prd - self.DP_hydro_inj - self.DPSurfaceplant
 			self.DP = self.Pprodwellhead + self.DP_flow + self.DP_hydro - self.DPSurfaceplant
 
 			self.PumpingPowerInj = self.DP*m_inj/densitywater(T_inj)/self.pumpeff/1e3
@@ -260,7 +350,6 @@ class BaseReservoir(object):
 			Pexcess = 344.7 #[kPa] = 50 psi. Excess pressure covers non-condensable gas pressure and net positive suction head for the pump
 			self.Pprodwellhead = vaporpressurewater(self.T_prd_bh) + Pexcess #[kPa] is minimum production pump inlet pressure and minimum wellhead pressure
 			# Following tip from CLGWG where operational settings allow for no vapor pressure to form:
-			# self.Pprodwellhead = np.array([0.0])
 			self.PIkPa = self.PI/(self.rhowaterprod/1000)/100 #convert PI from l/s/bar to kg/s/kPa
 
 			# Calculate pumping depth ... note, highest pumping requirements happen on day one of the project where vapor pressure closer to wellhead is the highest before the reservoir starts to deplete
@@ -295,9 +384,50 @@ class BaseReservoir(object):
 			self.WHP_Prod = -self.DP3
 			# Total pumping power
 			self.PumpingPower_ideal = self.PumpingPowerInj.sum() + self.PumpingPowerProd.sum()
-   
+
+	def plot_doublet(self, dpi=150):
+		"""Visualize a doublet of the proposed system. Using this method requires to first implement :py:func:`~subsurface.BaseReservoir.configure_well_dimensions`.
+
+		Args:
+			dpi (int, optional): figure dpi resolution. Defaults to 150.
+
+		Returns:
+			plt.figure.Figure: figure
+		"""
+		assert hasattr(self, "zprod"), "Implementation Error: You must define the wellbore and reservoir dimensions to plot doublets! Define method subsurface.BaseReservoir.configure_well_dimensions"
+
+		fig = plt.figure(dpi=dpi)
+		ax = fig.add_subplot(111, projection='3d')
+
+		ax.add_collection3d(Poly3DCollection(self.verts, alpha=0.1, color="tab:orange"))
+		ax.plot(self.xinj, self.yinj, self.zinj, 'tab:blue', linewidth=4)
+		ax.plot(self.xprod, self.yprod, self.zprod, 'tab:red', linewidth=4)
+
+		ax.set_xlim([np.min(self.v[:,0]) - 200, np.max(self.v[:,0]) + 200])
+		ax.set_ylim([np.min(self.v[:,1]) - 200, np.max(self.v[:,1]) + 200])
+		ax.set_zlim([np.min(self.v[:,2]) - 500, 0])
+
+		col1_patch = mpatches.Patch(color="tab:orange", label='Reservoir')
+		col2_patch = mpatches.Patch(color="tab:blue", label='Injector')
+		col3_patch = mpatches.Patch(color="tab:red", label='Producer')
+		handles = [col1_patch, col2_patch, col3_patch]
+
+		if hasattr(self, "zlat"):
+			for j in range(self.xlat.shape[1]):
+				ax.plot(self.xlat[:,j], self.ylat[:,j], self.zlat[:,j],
+						linewidth=2, color="black")
+
+			col4_patch = mpatches.Patch(color="black", label='Laterals')
+			handles.append(col4_patch)
+			
+		plt.legend(handles=handles)
+		plt.title("Demonstration of a Single Doublet")
+
+		return fig
+
 class PercentageReservoir(BaseReservoir):
-	"""A class defining subsurface reservoir and wellbore."""
+	"""Conceptual reservoir model where temperature declines based on an fixed annual decline rate."""
+
 	def __init__(self,
 				 Tres_init,
 				 geothermal_gradient,
@@ -318,16 +448,50 @@ class PercentageReservoir(BaseReservoir):
         		 rhorock=2700,
            		 cprock=1000,
               	 impedance = 0.1,
-                 thickness=200, #m
-                 PI = 20, # kg/s/bar
-                 II = 20, # kg/s/bar
+                 res_thickness=200,
+                 PI = 20,
+                 II = 20, 
                  SSR = 1.0,
-                 N_ramey_mv_avg=168, # hrs, 1 week worth of accumulation
+                 N_ramey_mv_avg=168,
                  drawdp=0.005,
                  plateau_length=3,
-                 FAST_MODE={"on": False, "period": 3600*8760/12}
+                 FAST_MODE={"on": False, "period": 3600*8760/12},
+				 PumpingModel="OpenLoop"
                  ):
-		"""Define attributes of the Subsurface class."""
+
+		"""Initialize reservoir model.
+
+		Args:
+			Tres_init (float): initial reservoir temperature in deg C.
+			geothermal_gradient (float): average geothermal gradient in deg C/km.
+			surface_temp (float): surface temperature in deg C.
+			L (float): project lifetime in years.
+			time_init (datetime): initial time.
+			well_depth (float): well depth in meters.
+			prd_well_diam (float): production well diameter in meters.
+			inj_well_diam (float): injection well diameter in meters.
+			num_prd (int): number of producers.
+			num_inj (int): number of injectors.
+			waterloss (float): fraction of injected water that is lost to the reservoir (fraction).
+			power_plant_type (str): type of power plant (either "Binary" or "Flash").
+			pumpeff (float): pump efficiency (fraction).
+			ramey (bool, optional): whether or not to use ramey's model for wellbore heat loss/gain. Defaults to True.
+			pumping (bool, optional): whther or not to account for parasitic losses due to pumping requirements. Defaults to True.
+			krock (float, optional): rock thermal conductivity in W/C-m. Defaults to 3.
+			rhorock (float, optional): rock bulk density in kg/m3. Defaults to 2700.
+			cprock (float, optional): rock heat capacity in J/kg-K. Defaults to 1000.
+			impedance (float, optional): reservoir pressure losses when using an impendance model. Defaults to 0.1.
+			res_thickness (float, optional): reservoir thickness in meters. Defaults to 200.
+			PI (float, optional): productivity index in kg/s/bar. Defaults to 20.
+			II (float, optional): injectivity index in kg/s/bar. Defaults to 20.
+			SSR (float, optional): Stimulation success rate, which is a multiplier used to reduce PI and II when stimulation is not fully successful. Defaults to 1.0.
+			N_ramey_mv_avg (int, optional): number of timesteps used for averaging the f-function when computing ramey's heat losses with variable mass flow rates. Defaults to 168.
+			drawdp (float, optional): annual decline rate of reservoir temperature (fraction). Defaults to 0.005.
+			plateau_length (int, optional): number of years before reservoir temperature starts to decline. Defaults to 3.
+			FAST_MODE (dict, optional): information used to reduce the required timestepping when simulating the reservoir. It comes with keys of "on" to turn it on and "period" to specify the time period needed to pass before the reservoir state is updated, which is aimed at reducing computational requirements in exchange for loss in accuracy. Defaults to {"on": False, "period": 3600*8760/12}.
+			PumpingModel (str, optional): model type used to compute pressure losses (either "OpenLoop" or "ClosedLoop"). Defaults to "OpenLoop".
+		"""
+
 		super(PercentageReservoir, self).__init__(Tres_init,
 											geothermal_gradient,
 											surface_temp,
@@ -347,34 +511,82 @@ class PercentageReservoir(BaseReservoir):
 											rhorock,
 											cprock,
 											impedance,
-											thickness,
-											PI, # kg/s/bar
-											II, # kg/s/bar
+											res_thickness,
+											PI,
+											II,
 											SSR,
 											N_ramey_mv_avg,
            									FAST_MODE)
 		self.numberoflaterals = 1
 		self.well_tvd = well_depth
 		self.well_md = self.well_tvd
+		self.res_length = 2000
+		self.res_thickness = res_thickness
+		self.res_width = 1000
 
 		self.Tres_arr = self.Tres_init*np.ones(self.L+1)
 		for i in range(self.L+1):
 			if i+1 > plateau_length:
 				self.Tres_arr[i] = (1 - drawdp) * self.Tres_arr[i-1]
-	
+
+		self.configure_well_dimensions()
+		
 	def pre_model(self, t, m_prd, m_inj, T_inj):
+		"""Computations to be performed before stepping the reservoir model.
+
+		Args:
+			t (datetime): current timestamp.
+            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s.
+            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
+			T_inj (float): injection temperature in deg C.
+		"""
 		pass
 
 	def model(self, t, m_prd, m_inj, T_inj):
 
-		"""Calculate reservoir properties and wellbore losses based on well control decisions."""
-  
+		"""Computations to be performed when stepping the reservoir model.
+
+		Args:
+			t (datetime): current timestamp.
+            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s.
+            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
+			T_inj (float): injection temperature in deg C.
+		"""
+
 		self.Tres = self.Tres_arr[t.year - self.time_init.year]
 		self.T_prd_bh = np.array(self.num_prd*[self.Tres], dtype='float')
 		self.T_inj_wh = np.array(self.num_inj*[T_inj], dtype='float')
 
+	def configure_well_dimensions(self):
+		"""Configuration specifications of a doublet. It requires the specification of a doublet, including the producer dimensions (self.xprod, self.yprod, self.zprod), injector dimensions (self.xinj, self.yinj, self.zinj) and reservoir vertices (self.verts). See Class PercentageReservoir for example implementation.
+		"""
+
+		self.zprod = np.array([0, -self.well_tvd])
+		self.xprod = -self.res_length/2 * np.ones_like(self.zprod)
+		self.yprod = np.zeros_like(self.zprod)
+
+		self.zinj = np.array([0, -self.well_tvd])
+		self.xinj = self.res_length/2 * np.ones_like(self.zinj)
+		self.yinj = np.zeros_like(self.zinj)
+
+		self.v = [
+			[-self.res_length/2, -self.res_width/2, -self.well_tvd + self.res_thickness],
+			[-self.res_length/2, self.res_width/2, -self.well_tvd + self.res_thickness],
+			[self.res_length/2, self.res_width/2, -self.well_tvd + self.res_thickness],
+			[self.res_length/2, -self.res_width/2, -self.well_tvd + self.res_thickness],
+			[self.res_length/2, -self.res_width/2, -self.well_tvd],
+			[-self.res_length/2, -self.res_width/2, -self.well_tvd],
+			[-self.res_length/2, self.res_width/2, -self.well_tvd],
+			[self.res_length/2, self.res_width/2, -self.well_tvd],
+		]
+
+		self.v = np.array(self.v)
+		self.f = [[0,1,2,3], [4,5,6,7], [0, 1, 6, 5], [1, 2, 7, 6], [2, 3, 4, 7], [0, 3, 4, 5]]
+		self.verts =  [[self.v[i] for i in p] for p in self.f]
+
 class EnergyDeclineReservoir(BaseReservoir):
-	"""A class defining subsurface reservoir and wellbore."""
+	"""Conceptual reservoir model where temperature decline is proportional to the energy exctracted from the subsurface."""
+
 	def __init__(self,
 				 Tres_init,
 				 Pres_init,
@@ -393,25 +605,59 @@ class EnergyDeclineReservoir(BaseReservoir):
 				 ramey=True,
 				 pumping=True,
      			 krock=3,
-        		 rhorock=2700, #g/cc
-           		 cprock=1000, #J/kg-C
+        		 rhorock=2700,
+           		 cprock=1000,
               	 impedance = 0.1,
-				 thickness=200, #m
-                 PI = 20, # kg/s/bar
-                 II = 20, # kg/s/bar
+				 res_thickness=200,
+                 PI = 20,
+                 II = 20,
                  SSR = 1.0,
                  N_ramey_mv_avg=24, # hrs, 1 week worth of accumulation
                  V_res=1,
                  phi_res=0.1,
                  compute_hydrostatic_pressure=True,
                  rock_energy_recovery=1.0,
-                 beta=5,
-                 nu=2e-2,
-                 distance_from_boundary=100, #m
-                 decline_func = lambda k,D,t,nu,beta: (k / t* nu)**beta,
-                 FAST_MODE={"on": False, "period": 3600*8760/12}
+                 decline_func = lambda k,D,t: (k / t* 2e-2)**5,
+                 FAST_MODE={"on": False, "period": 3600*8760/12},
+				 PumpingModel="OpenLoop"
                  ):
-		"""Define attributes of the Subsurface class."""
+		"""Initialize reservoir model.
+
+		Args:
+			Tres_init (float): initial reservoir temperature in deg C.
+			Pres_init (float): initial reservoir pressure in bar.
+			geothermal_gradient (float): average geothermal gradient in deg C/km.
+			surface_temp (float): surface temperature in deg C.
+			L (float): project lifetime in years.
+			time_init (datetime): initial time.
+			well_depth (float): well depth in meters.
+			prd_well_diam (float): production well diameter in meters.
+			inj_well_diam (float): injection well diameter in meters.
+			num_prd (int): number of producers.
+			num_inj (int): number of injectors.
+			waterloss (float): fraction of injected water that is lost to the reservoir (fraction).
+			power_plant_type (str): type of power plant (either "Binary" or "Flash").
+			pumpeff (float): pump efficiency (fraction).
+			ramey (bool, optional): whether or not to use ramey's model for wellbore heat loss/gain. Defaults to True.
+			pumping (bool, optional): whther or not to account for parasitic losses due to pumping requirements. Defaults to True.
+			krock (float, optional): rock thermal conductivity in W/C-m. Defaults to 3.
+			rhorock (float, optional): rock bulk density in kg/m3. Defaults to 2700.
+			cprock (float, optional): rock heat capacity in J/kg-K. Defaults to 1000.
+			impedance (float, optional): reservoir pressure losses when using an impendance model. Defaults to 0.1.
+			res_thickness (float, optional): reservoir thickness in meters. Defaults to 200.
+			PI (float, optional): productivity index in kg/s/bar. Defaults to 20.
+			II (float, optional): injectivity index in kg/s/bar. Defaults to 20.
+			SSR (float, optional): Stimulation success rate, which is a multiplier used to reduce PI and II when stimulation is not fully successful. Defaults to 1.0.
+			N_ramey_mv_avg (int, optional): number of timesteps used for averaging the f-function when computing ramey's heat losses with variable mass flow rates. Defaults to 168.
+			V_res (float, optional): reservoir bulk volume in km3. Defaults to 1.
+			phi_res (float, optional): reservoir porosity (fraction). Defaults to 0.1.
+			compute_hydrostatic_pressure: (bool, optional): whether or not hydrostatic pressure is computed or assumed to be equal to the initial reservoir pressure. Defaults to True.
+			rock_energy_recovery (float, optional): maximum fraction of subsurface energy that is recoverable (fraction). Defaults to 1.0.
+			decline_func (func, optional): function used to establish the correlation between temperature decline and energy extraction. Defaults to a 5th order polynomial.
+			FAST_MODE (dict, optional): information used to reduce the required timestepping when simulating the reservoir. It comes with keys of "on" to turn it on and "period" to specify the time period needed to pass before the reservoir state is updated, which is aimed at reducing computational requirements in exchange for loss in accuracy. Defaults to {"on": False, "period": 3600*8760/12}.
+			PumpingModel (str, optional): model type used to compute pressure losses (either "OpenLoop" or "ClosedLoop"). Defaults to "OpenLoop".
+		"""
+
 		super(EnergyDeclineReservoir, self).__init__(Tres_init,
 											geothermal_gradient,
 											surface_temp,
@@ -431,22 +677,23 @@ class EnergyDeclineReservoir(BaseReservoir):
 											rhorock,
 											cprock,
 											impedance,
-											thickness,
-											PI, # kg/s/bar
-											II, # kg/s/bar
+											res_thickness,
+											PI,
+											II,
 											SSR,
 											N_ramey_mv_avg,
-											FAST_MODE)
+											FAST_MODE,
+											PumpingModel)
 
 		self.numberoflaterals = 1
 		self.well_tvd = well_depth
 		self.well_md = self.well_tvd
+		self.res_length = 2000
+		self.res_thickness = res_thickness
+		self.res_width = V_res * 1e9 /self.num_prd /(self.res_length * self.res_thickness)
 
 		self.Pres_init = self.Phydrostatic if compute_hydrostatic_pressure else Pres_init*1e2
 		self.V_res = V_res * 1e9 # m3
-		self.numberoflaterals = 1
-		self.well_tvd = well_depth
-		self.well_md = self.well_tvd
 		self.phi_res = phi_res
 		self.beta = beta
 		self.nu = nu
@@ -465,140 +712,77 @@ class EnergyDeclineReservoir(BaseReservoir):
 		self.decline_coeff = 1
 		self.decline_func = decline_func
 		self.D = 0
-		# self.distance_from_boundary = distance_from_boundary #m assume that boundary is very close
-		# V = pi * r**2 * h
-		# self.ds = (self.V_res / self.thickness)**0.5
-		# self.A = 4 * self.thickness * self.ds
-		# self.total_mass_inj = 0
-		# self.plateau_thresh_vol = self.phi_res * self.V_res
+
+		self.configure_well_dimensions()
+
 	def pre_model(self, t, m_prd, m_inj, T_inj):
-		# self.boundary_influx = self.krock/1e3 * self.A * (self.Tres_init - self.Tres) * timestep.total_seconds()/(self.distance_from_boundary) #kJ
+		"""Computations to be performed before stepping the reservoir model.
+
+		Args:
+			t (datetime): current timestamp.
+            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s.
+            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
+			T_inj (float): injection temperature in deg C.
+
+		"""
+
 		mass_produced = m_prd * self.timestep.total_seconds()
 		mass_injected = m_inj * self.timestep.total_seconds()
-		# self.total_mass_inj += mass_injected.sum()
 		self.net_energy_produced = (self.h_prd * mass_produced).sum() - (self.h_inj * mass_injected).sum()# - self.boundary_influx #kg produced
 		self.energy_res_curr -= self.net_energy_produced
 
 	def model(self, t, m_prd, m_inj, T_inj):
+		"""Computations to be performed when stepping the reservoir model.
 
-		"""Calculate reservoir properties and wellbore losses based on well control decisions."""
+		Args:
+			t (datetime): current timestamp.
+            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s.
+            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
+			T_inj (float): injection temperature in deg C.
+		"""
+
 		self.h_prd = np.array([steamtable.h_pt(self.Pres_init/1e2, T) for T in self.T_prd_bh]) #self.fxsteam.func_hl(self.T_prd_bh, *self.fxsteam.popt_hl) #np.array([steamtable.h_pt(self.Pres_init/1e2, T) for T in self.T_prd_bh])
 		self.h_inj = np.array([steamtable.hL_t(T) for T in self.T_inj_bh]) #self.fxsteam.func_hl(self.T_inj_bh, *self.fxsteam.popt_hl) #np.array([steamtable.hL_t(T) for T in self.T_inj_bh])
 		self.k =  self.energy_res_curr/self.energy_res_init if self.energy_res_curr>=0 else self.kold * self.kratio
-		# self.decline_coeff = np.clip(self.k**(((t - self.time_init).total_seconds()/3600/8760/self.L/self.nu) ** self.beta), 0, 1)
-		# self.decline_coeff = np.clip((self.k** self.beta + self.nu), 0, 1)
-		# self.decline_coeff = np.clip((self.k * (t - self.time_init).total_seconds()/3600/8760/self.L + self.nu)**self.beta, 0, 1)
-		# self.decline_coeff = (self.k / (1+(t - self.time_init).total_seconds()/3600/8760/self.L)*self.nu)**self.beta
-		# self.decline_coeff = self.decline_func(self.k, (t - self.time_init).total_seconds()/3600/8760/self.L, self.nu, self.beta)
-		# self.Tres = min(max(np.mean(self.T_inj_bh)*1.5, self.Tres_init * self.decline_coeff), self.Tres)
-		self.D = (np.log(self.energy_res_curr + self.net_energy_produced) - np.log(self.energy_res_curr))/timestep.total_seconds()
-		# print(self.k, self.D, self.time_curr, (self.time_curr - self.time_init).total_seconds())
+		self.D = (np.log(self.energy_res_curr + self.net_energy_produced) - np.log(self.energy_res_curr))/self.timestep.total_seconds()
 		self.decline_coeff = self.decline_func(self.k, self.D, (self.time_curr - self.time_init).total_seconds(), self.nu, self.beta)
 		self.Tres = min(max(np.mean(self.T_inj_bh)*1.5, self.Tres_init * self.decline_coeff), self.Tres)
 		self.T_prd_bh = np.array(self.num_prd*[self.Tres], dtype='float')
 		self.kratio = self.k / self.kold
 		self.kold = self.k
 
-def compute_temp(t, x, D, v, T0t, Tx0):
-    '''
-    References:
-    - https://mooseframework.inl.gov/modules/porous_flow/tests/avdonin/1d_avdonin.html
-    - https://www.osti.gov/servlets/purl/137510 (page 18-20)
-    '''
-    if math.erfc((x + v * t)/(math.sqrt(4 * D * t))) == 0:
-        rhs = 1/2 * math.erfc((x - v * t)/(math.sqrt(4 * D * t)))
-    else: 
-        rhs = 1/2 * (math.erfc((x - v * t)/(math.sqrt(4 * D * t))) + math.exp(v * x / D) * math.erfc((x + v * t)/(math.sqrt(4 * D * t))))
-    T = rhs * (T0t - Tx0) + Tx0
-    return T
 
-class ModifiedAvdonin(BaseReservoir):
-	"""Modified Avdonin model to incorporate unsteady-state flow."""
-	def __init__(self,
-				 Tres_init,
-				 Pres_init,
-				 geothermal_gradient,
-				 surface_temp,
-				 L,
-				 time_init,
-				 well_depth,
-				 prd_well_diam,
-				 inj_well_diam,
-				 num_prd,
-				 num_inj,
-				 waterloss,
-				 power_plant_type,
-				 pumpeff,
-				 ramey=True,
-				 pumping=True,
-     			 krock=20, # saturated thermal conductivity
-        		 rhorock=2700, #g/cc
-           		 cprock=1000, #J/kg-C
-              	 impedance = 0.1,
-				 thickness=200, #m
-                 PI = 20, # kg/s/bar
-                 II = 20, # kg/s/bar
-                 SSR = 1.0,
-                 V_res=1,
-                 phi_res=0.1,
-                 res_length=300,
-                 FAST_MODE={"on": False, "period": 3600*8760/12}
-                 ):
-		"""Define attributes of the Subsurface class."""
-		super(ModifiedAvdonin, self).__init__(Tres_init,
-											geothermal_gradient,
-											surface_temp,
-											L,
-											time_init,
-											well_depth,
-											prd_well_diam,
-											inj_well_diam,
-											num_prd,
-											num_inj,
-											waterloss,
-											power_plant_type,
-											pumpeff,
-											ramey,
-											pumping,
-											krock,
-											rhorock,
-											cprock,
-											impedance,
-											thickness,
-											PI, # kg/s/bar
-											II, # kg/s/bar
-											SSR,
-											FAST_MODE)
+	def configure_well_dimensions(self):
+		"""Configuration specifications of a doublet. It requires the specification of a doublet, including the producer dimensions (self.xprod, self.yprod, self.zprod), injector dimensions (self.xinj, self.yinj, self.zinj) and reservoir vertices (self.verts). See Class PercentageReservoir for example implementation.
+		"""
 
-		self.m_prds = np.array([self.num_prd * 100]) # randomly initialized at 100kg/s per producer
-		self.T_injs = np.array([70]) # randomly initialized
-		self.timesteps = np.array([1]) # first record gets minimal weight
-		self.res_length = res_length
-		width = V_res*1e9/(thickness*res_length) # reservoir width [m]
-		self.A = thickness * width # reservoir cross-sectional area [m2]
-		self.D = self.krock / (self.rhorock * self.cprock) #m2/s
-	
-	def pre_model(self, t, m_prd, m_inj, T_inj):
-		self.m_prds = np.append(self.m_prds, m_prd.sum())
-		self.T_injs = np.append(self.T_injs, T_inj)
-		self.timesteps = np.append(self.timesteps, self.timestep.total_seconds())
+		self.zprod = np.array([0, -self.well_tvd])
+		self.xprod = -self.res_length/2 * np.ones_like(self.zprod)
+		self.yprod = np.zeros_like(self.zprod)
 
-	def model(self, t, m_prd, m_inj, T_inj):
-		time_passed_seconds = (t - self.time_init).total_seconds()
-		self.rhow_prd_bh = densitywater(self.T_prd_bh.mean())
-		self.cw_prd_bh = heatcapacitywater(self.T_prd_bh.mean()) # J/kg-degC
-		self.m_mv_avg = (self.m_prds * self.timesteps/self.timesteps.sum()).sum()
-		self.T_inj_mv_avg = (self.T_injs * self.timesteps/self.timesteps.sum()).sum()
-		self.uw = self.m_mv_avg / self.rhow_prd_bh / self.A # m/s
-		self.v = self.uw * self.rhow_prd_bh * self.cw_prd_bh / (self.rhorock * self.cprock)
-		self.Tres = min(self.Tres, compute_temp(time_passed_seconds, self.res_length, self.D, 
-                                          		self.v, self.T_inj_mv_avg, self.Tres_init))
+		self.zinj = np.array([0, -self.well_tvd])
+		self.xinj = self.res_length/2 * np.ones_like(self.zinj)
+		self.yinj = np.zeros_like(self.zinj)
+
+		self.v = [
+			[-self.res_length/2, -self.res_width/2, -self.well_tvd + self.res_thickness],
+			[-self.res_length/2, self.res_width/2, -self.well_tvd + self.res_thickness],
+			[self.res_length/2, self.res_width/2, -self.well_tvd + self.res_thickness],
+			[self.res_length/2, -self.res_width/2, -self.well_tvd + self.res_thickness],
+			[self.res_length/2, -self.res_width/2, -self.well_tvd],
+			[-self.res_length/2, -self.res_width/2, -self.well_tvd],
+			[-self.res_length/2, self.res_width/2, -self.well_tvd],
+			[self.res_length/2, self.res_width/2, -self.well_tvd],
+		]
+
+		self.v = np.array(self.v)
+		self.f = [[0,1,2,3], [4,5,6,7], [0, 1, 6, 5], [1, 2, 7, 6], [2, 3, 4, 7], [0, 3, 4, 5]]
+		self.verts =  [[self.v[i] for i in p] for p in self.f]
 
 class DiffusionConvection(BaseReservoir):
-	"""Modified Avdonin model to incorporate unsteady-state flow."""
+	"""Analytical solution of the one-dimensional transient semi-infinite diffusion-convection equation."""
 	def __init__(self,
 				 Tres_init,
-				 Pres_init,
 				 geothermal_gradient,
 				 surface_temp,
 				 L,
@@ -613,23 +797,58 @@ class DiffusionConvection(BaseReservoir):
 				 pumpeff,
 				 ramey=True,
 				 pumping=True,
-     			 krock=30, # saturated thermal conductivity ... we make it kinda high to demonstrate the diffusive effect
-        		 rhorock=2600, #g/cc
-           		 cprock=1100, #J/kg-C
+     			 krock=30,
+        		 rhorock=2600,
+           		 cprock=1100,
               	 impedance = 0.1,
-				 thickness=1000, #m
-                 PI = 20, # kg/s/bar
-                 II = 20, # kg/s/bar
+				 res_thickness=1000,
+                 PI = 20,
+                 II = 20,
                  SSR = 1.0,
                  N_ramey_mv_avg=168,
-                 V_res=1, # for all wells
+                 V_res=1,
                  phi_res=0.1,
                  lateral_length=1000,
                  dynamic_properties=False,
                  FAST_MODE={"on": False, "period": 3600*8760/12},
 				 PumpingModel="OpenLoop"
                  ):
-		"""Define attributes of the Subsurface class."""
+
+		"""Initialize reservoir model.
+
+		Args:
+			Tres_init (float): initial reservoir temperature in deg C.
+			geothermal_gradient (float): average geothermal gradient in deg C/km.
+			surface_temp (float): surface temperature in deg C.
+			L (float): project lifetime in years.
+			time_init (datetime): initial time.
+			well_depth (float): well depth in meters.
+			prd_well_diam (float): production well diameter in meters.
+			inj_well_diam (float): injection well diameter in meters.
+			num_prd (int): number of producers.
+			num_inj (int): number of injectors.
+			waterloss (float): fraction of injected water that is lost to the reservoir (fraction).
+			power_plant_type (str): type of power plant (either "Binary" or "Flash").
+			pumpeff (float): pump efficiency (fraction).
+			ramey (bool, optional): whether or not to use ramey's model for wellbore heat loss/gain. Defaults to True.
+			pumping (bool, optional): whther or not to account for parasitic losses due to pumping requirements. Defaults to True.
+			krock (float, optional): rock thermal conductivity in W/C-m. Defaults to 3.
+			rhorock (float, optional): rock bulk density in kg/m3. Defaults to 2700.
+			cprock (float, optional): rock heat capacity in J/kg-K. Defaults to 1000.
+			impedance (float, optional): reservoir pressure losses when using an impendance model. Defaults to 0.1.
+			res_thickness (float, optional): reservoir thickness in meters. Defaults to 200.
+			PI (float, optional): productivity index in kg/s/bar. Defaults to 20.
+			II (float, optional): injectivity index in kg/s/bar. Defaults to 20.
+			SSR (float, optional): Stimulation success rate, which is a multiplier used to reduce PI and II when stimulation is not fully successful. Defaults to 1.0.
+			N_ramey_mv_avg (int, optional): number of timesteps used for averaging the f-function when computing ramey's heat losses with variable mass flow rates. Defaults to 168.
+			V_res (float, optional): reservoir bulk volume for all wells in km3. Defaults to 1.
+			phi_res (float, optional): reservoir porosity (fraction). Defaults to 0.1.
+			lateral_length (float, optional):  lateral length for each well in meters. Defaults to 1000.
+			dynamic_properties (bool, optional):  whether or not geofluid properties in the subsurface are updated using steamtables as a function of varying subsurface temperature. Defaults to False.
+			FAST_MODE (dict, optional): information used to reduce the required timestepping when simulating the reservoir. It comes with keys of "on" to turn it on and "period" to specify the time period needed to pass before the reservoir state is updated, which is aimed at reducing computational requirements in exchange for loss in accuracy. Defaults to {"on": False, "period": 3600*8760/12}.
+			PumpingModel (str, optional): model type used to compute pressure losses (either "OpenLoop" or "ClosedLoop"). Defaults to "OpenLoop".
+		"""
+
 		super(DiffusionConvection, self).__init__(Tres_init,
 											geothermal_gradient,
 											surface_temp,
@@ -649,9 +868,9 @@ class DiffusionConvection(BaseReservoir):
 											rhorock,
 											cprock,
 											impedance,
-											thickness,
-											PI, # kg/s/bar
-											II, # kg/s/bar
+											res_thickness,
+											PI,
+											II,
 											SSR,
 											N_ramey_mv_avg,
 											FAST_MODE,
@@ -662,15 +881,15 @@ class DiffusionConvection(BaseReservoir):
 		self.well_md = self.well_tvd + lateral_length
 		self.lateral_length = lateral_length
 		self.phi_res = phi_res
-		self.thickness = thickness
+		self.res_thickness = res_thickness
 		self.V_res_per_well = V_res/self.num_prd # make it for a single well
 		if self.lateral_length == 0: # vertical well
 			# consider a square reservoir and compute cross sectional area
-			self.res_length = np.sqrt(self.V_res_per_well*1e9/self.thickness) # meters
+			self.res_length = np.sqrt(self.V_res_per_well*1e9/self.res_thickness) # meters
 		else:
 			# consider adjacent and parallel 1 injector & 2 producer system where res_length is the distance between them ... only half of the volume is used
-			self.res_length = self.V_res_per_well*1e9/(self.thickness * self.lateral_length)
-            # self.res_length = self.V_res_per_well*1e9/(self.thickness * self.lateral_length)
+			self.res_length = self.V_res_per_well*1e9/(self.res_thickness * self.lateral_length)
+            # self.res_length = self.V_res_per_well*1e9/(self.res_thickness * self.lateral_length)
 
 		self.rhow_prd_bh = densitywater(self.T_prd_bh.mean())
 		self.cw_prd_bh = heatcapacitywater(self.T_prd_bh.mean()) # J/kg-degC
@@ -678,8 +897,8 @@ class DiffusionConvection(BaseReservoir):
 		self.cm = phi_res * self.cw_prd_bh + (1-phi_res) * cprock
 		# self.rhom = rhorock
 		# self.cm = cprock
-		self.width = self.V_res_per_well*1e9/(self.thickness*self.res_length) # reservoir width [m]
-		self.A = self.thickness * self.width * self.phi_res # reservoir cross-sectional area [m2]
+		self.res_width = self.V_res_per_well*1e9/(self.res_thickness*self.res_length) # reservoir width [m]
+		self.A = self.res_thickness * self.res_width * self.phi_res # reservoir cross-sectional area [m2]
 		self.D = self.krock / (self.rhom * self.cm) #m2/s
 		# self.uw = (self.num_prd * 50)/ self.rhow_prd_bh / self.A # m/s with random flow rate initialization
 		self.uw = 50/ self.rhow_prd_bh / self.A # m/s with random flow rate initialization
@@ -690,7 +909,21 @@ class DiffusionConvection(BaseReservoir):
 		self.timesteps = np.array([1]) # first record gets minimal weight
 		self.dynamic_properties = dynamic_properties
 
+		# For visualization purposes
+		self.configure_well_dimensions()
+
 	def pde_solution(self, tau, t, x, V):
+		"""Solve PDE.
+
+		Args:
+			tau (float): integration time variable
+			t (float): total time passed
+			x (float): reservoir length at which the integration is performed
+			V (float): average velocity
+
+		Returns:
+			output: float
+		"""
 		mask = self.timesteps < (t-tau)
 		coeff = (self.T_injs[mask][-1]-self.Tres_init)/np.sqrt(16 * np.pi * self.D * tau**3)
 		term1 = (x - V*tau) * np.exp(- (x - V*tau)**2/(4 * self.D * tau))
@@ -698,8 +931,17 @@ class DiffusionConvection(BaseReservoir):
 		return  coeff * (term1 + term2)
 
 	def pre_model(self, t, m_prd, m_inj, T_inj):
-		# self.uw = m_prd.sum() / self.rhow_prd_bh / self.A # m/s
-		self.uw = m_prd.mean() / self.rhow_prd_bh / self.A # m/s
+		"""Computations to be performed before stepping the reservoir model.
+
+		Args:
+			t (datetime): current timestamp.
+            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s.
+            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
+			T_inj (float): injection temperature in deg C.
+
+		"""
+
+		self.uw = m_prd.mean() / self.rhow_prd_bh / self.A
 		self.V = self.uw * self.rhow_prd_bh * self.cw_prd_bh / (self.rhom * self.cm)
 		self.Vs = np.append(self.Vs, self.V)
 		self.T_injs = np.append(self.T_injs, T_inj)
@@ -707,22 +949,79 @@ class DiffusionConvection(BaseReservoir):
 		self.timesteps = np.append(self.timesteps, self.time_passed_seconds)
 
 	def model(self, t, m_prd, m_inj, T_inj):
+		"""Computations to be performed when stepping the reservoir model.
+
+		Args:
+			t (datetime): current timestamp.
+            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s.
+            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
+			T_inj (float): injection temperature in deg C.
+		"""
+
 		if self.dynamic_properties:
 			self.rhow_prd_bh = densitywater(self.T_prd_bh.mean())
-			self.cw_prd_bh = heatcapacitywater(self.T_prd_bh.mean()) # J/kg-degC
+			self.cw_prd_bh = heatcapacitywater(self.T_prd_bh.mean())
 
 		self.Vavg = self.Vs.mean()
 		rhs, _ = integrate.quad(self.pde_solution, 0, self.time_passed_seconds, 
                              	(self.time_passed_seconds, self.res_length, self.Vavg),
-                              epsabs=1e-3, epsrel=1e-3, 
-                            #   maxp1=500, limlst=500,
-                            #   limit=500
+                              epsabs=1e-3, epsrel=1e-3,
                               )
 
 		self.Tres = rhs + self.Tres_init
 		self.T_prd_bh = np.array(self.num_prd*[self.Tres], dtype='float')
 		self.T_inj_wh = np.array(self.num_inj*[T_inj], dtype='float')
 
+	def configure_well_dimensions(self):
+		"""Configuration specifications of a doublet. It requires the specification of a doublet, including the producer dimensions (self.xprod, self.yprod, self.zprod), injector dimensions (self.xinj, self.yinj, self.zinj) and reservoir vertices (self.verts). See Class PercentageReservoir for example implementation.
+		"""
+
+		# Vertical well system
+		if self.lateral_length == 0: 
+			self.zprod = np.array([0, -self.well_tvd])
+			self.xprod = -self.res_length/2 * np.ones_like(self.zprod)
+			self.yprod = np.zeros_like(self.zprod)
+
+			self.zinj = np.array([0, -self.well_tvd])
+			self.xinj = self.res_length/2 * np.ones_like(self.zinj)
+			self.yinj = np.zeros_like(self.zinj)
+
+			self.v = [
+				[-self.res_length/2, -self.res_width/2, -self.well_tvd + self.res_thickness],
+				[-self.res_length/2, self.res_width/2, -self.well_tvd + self.res_thickness],
+				[self.res_length/2, self.res_width/2, -self.well_tvd + self.res_thickness],
+				[self.res_length/2, -self.res_width/2, -self.well_tvd + self.res_thickness],
+				[self.res_length/2, -self.res_width/2, -self.well_tvd],
+				[-self.res_length/2, -self.res_width/2, -self.well_tvd],
+				[-self.res_length/2, self.res_width/2, -self.well_tvd],
+				[self.res_length/2, self.res_width/2, -self.well_tvd],
+			]
+
+		# Horizontal well system
+		else:
+
+			self.zprod = np.array([0, -self.well_tvd, -self.well_tvd])
+			self.xprod = np.array([-self.res_length/2, -self.res_length/2, self.res_length/2])
+			self.yprod = -self.res_width/2 * np.ones_like(self.zprod)
+
+			self.zinj = np.array([0, -self.well_tvd, -self.well_tvd])
+			self.xinj = np.array([self.res_length/2, self.res_length/2, -self.res_length/2])
+			self.yinj = self.res_width/2 * np.ones_like(self.zinj)
+
+			self.v = [
+				[-self.res_length/2, -self.res_width/2, -self.well_tvd + self.res_thickness/2],
+				[-self.res_length/2, self.res_width/2, -self.well_tvd + self.res_thickness/2],
+				[self.res_length/2, self.res_width/2, -self.well_tvd + self.res_thickness/2],
+				[self.res_length/2, -self.res_width/2, -self.well_tvd + self.res_thickness/2],
+				[self.res_length/2, -self.res_width/2, -self.well_tvd - self.res_thickness/2],
+				[-self.res_length/2, -self.res_width/2, -self.well_tvd - self.res_thickness/2],
+				[-self.res_length/2, self.res_width/2, -self.well_tvd - self.res_thickness/2],
+				[self.res_length/2, self.res_width/2, -self.well_tvd - self.res_thickness/2],
+			]
+
+		self.v = np.array(self.v)
+		self.f = [[0,1,2,3], [4,5,6,7], [0, 1, 6, 5], [1, 2, 7, 6], [2, 3, 4, 7], [0, 3, 4, 5]]
+		self.verts =  [[self.v[i] for i in p] for p in self.f]
 
 class ULoopSBT(BaseReservoir):
 	"""Numerical ULoop model based on Slender-Body Theory (SBT), originally developed by  Beckers et al. (2023)."""
@@ -748,7 +1047,7 @@ class ULoopSBT(BaseReservoir):
         		 rho_m=2875,
            		 c_m=825,
               	 impedance = 0.1,
-				 thickness=1000,
+				 res_thickness=1000,
                  PI = 20,
                  II = 20,
                  SSR = 1.0,
@@ -772,7 +1071,54 @@ class ULoopSBT(BaseReservoir):
 				 PumpingModel="ClosedLoop",
 				 closedloop_design="Default",
                  ):
-		"""Define attributes of the Subsurface class."""
+
+		"""Initialize reservoir model.
+
+		Args:
+			Tres_init (float): initial reservoir temperature in deg C.
+			geothermal_gradient (float): average geothermal gradient in deg C/km.
+			surface_temp (float): surface temperature in deg C.
+			L (float): project lifetime in years.
+			time_init (datetime): initial time.
+			well_depth (float): well depth in meters.
+			prd_well_diam (float): production well diameter in meters.
+			inj_well_diam (float): injection well diameter in meters.
+			num_prd (int): number of producers.
+			num_inj (int): number of injectors.
+			waterloss (float): fraction of injected water that is lost to the reservoir (fraction).
+			power_plant_type (str): type of power plant (either "Binary" or "Flash").
+			pumpeff (float): pump efficiency (fraction).
+			ramey (bool, optional): whether or not to use ramey's model for wellbore heat loss/gain. Defaults to True.
+			pumping (bool, optional): whther or not to account for parasitic losses due to pumping requirements. Defaults to True.
+			k_m (float, optional): rock thermal conductivity in W/C-m. Defaults to 3.
+			rho_m (float, optional): rock bulk density in kg/m3. Defaults to 2700.
+			c_m (float, optional): rock heat capacity in J/kg-K. Defaults to 1000.
+			impedance (float, optional): reservoir pressure losses when using an impendance model. Defaults to 0.1.
+			res_thickness (float, optional): reservoir thickness in meters. Defaults to 200.
+			PI (float, optional): productivity index in kg/s/bar. Defaults to 20.
+			II (float, optional): injectivity index in kg/s/bar. Defaults to 20.
+			SSR (float, optional): Stimulation success rate, which is a multiplier used to reduce PI and II when stimulation is not fully successful. Defaults to 1.0.
+			N_ramey_mv_avg (int, optional): number of timesteps used for averaging the f-function when computing ramey's heat losses with variable mass flow rates. Defaults to 168.
+			V_res (float, optional): reservoir bulk volume for all wells in km3. Defaults to 1.
+			phi_res (float, optional): reservoir porosity (fraction). Defaults to 0.1.
+			half_lateral_length (float, optional): half of the total producer-to-injector lateral length in meters. Defaults to 2000.
+			lateral_diam (float, optional): diameter of wellbore lateral section in meters. Defaults to 0.3115.
+			lateral_spacing (float, optional): spacing between uloop laterals in meters. Defaults to 100.
+			dynamic_properties (bool, optional):  whether or not geofluid properties in the subsurface are updated using steamtables as a function of varying subsurface temperature. Defaults to False.
+			k_f (float, optional): fluid thermal conductivity in W/C-m. Defaults to 0.68.
+			mu_f (float, optional): fluid kinematic viscosity in m2/s. Defaults to 600e-6.
+			cp_f (float, optional): fluid heat capacity in J/kg-K. Defaults to 4200.
+			rho_f (float, optional): fluid density in kg/m3. Defaults to 1000.
+			dx (int, optional): mesh descritization size in meters. Defaults to None (computed automatically).
+			numberoflaterals (int, optional): number of laterals for each uloop doublet. Defaults to 3.
+			lateralflowallocation (int, optional): distribution of flow across uloop laterals. Defaults to None (equal distribution)
+			lateralflowmultiplier (int, optional): velocity multiplier across laterals. Defaults to 1.
+			fullyimplicit (int, optional): how to solve the numerical system of equations using Euler's. Defaults to 1.
+			FAST_MODE (dict, optional): information used to reduce the required timestepping when simulating the reservoir. It comes with keys of "on" to turn it on and "period" to specify the time period needed to pass before the reservoir state is updated, which is aimed at reducing computational requirements in exchange for loss in accuracy. Defaults to {"on": False, "period": 3600*8760/12}.
+			PumpingModel (str, optional): model type used to compute pressure losses (either "OpenLoop" or "ClosedLoop"). Defaults to "ClosedLoop".
+			closedloop_design (str, optional): Type of closedloop_design to simulate (either "Default" or "Eavor"). Defaults to "Default".
+		"""
+
 		super(ULoopSBT, self).__init__(Tres_init,
 											geothermal_gradient,
 											surface_temp,
@@ -792,7 +1138,7 @@ class ULoopSBT(BaseReservoir):
 											rho_m,
 											c_m,
 											impedance,
-											thickness,
+											res_thickness,
 											PI,
 											II,
 											SSR,
@@ -803,11 +1149,11 @@ class ULoopSBT(BaseReservoir):
 		self.well_tvd = well_depth
 		self.well_md = self.well_tvd + numberoflaterals * half_lateral_length
 		self.half_lateral_length = half_lateral_length
-		self.lateral_length = 2 * half_lateral_length # we compute the prd-to-inj lateral length here, such that both the prd and inj have the same lateral length individually
+		self.lateral_length = 2 * half_lateral_length
 		self.lateral_diam = lateral_diam
 		self.vertical_diam = (self.prd_well_diam + self.inj_well_diam) / 2
 		self.rho_f = rho_f if rho_f else densitywater(self.T_prd_bh.mean())
-		self.cp_f = cp_f if cp_f else heatcapacitywater(self.T_prd_bh.mean()) # J/kg-degC
+		self.cp_f = cp_f if cp_f else heatcapacitywater(self.T_prd_bh.mean())
 		self.mu_f = mu_f if mu_f else viscositywater(self.T_prd_bh.mean())
 		self.k_f = k_f
 		self.c_m = c_m
@@ -825,13 +1171,15 @@ class ULoopSBT(BaseReservoir):
 		N = 10
 		self.dx = dx if dx else self.lateral_length//N
 		self.lateral_spacing = lateral_spacing
+		self.res_thickness = 1000 
 
-		# Following design proposed by Eavor
+		# Following the design proposed by Eavor (https://pangea.stanford.edu/ERE/db/GeoConf/papers/SGW/2022/Beckers.pdf)
 		if "eavor" in closedloop_design.lower():
 			print("Running Eavor Closed Loop System Design ...")
 			vertical_section_length = 2000
 			vertical_well_spacing = 100
 			junction_depth = 4000
+			self.res_thickness = self.well_tvd - junction_depth
 			angle = 20*np.pi/180
 			element_length = 150
 
@@ -843,7 +1191,6 @@ class ULoopSBT(BaseReservoir):
 
 			inclined_length = abs(-junction_depth - zinj[-1])/np.cos(angle)
 
-			# zinj_inclined_length = np.arange(zinj[-1]-step_size, -junction_depth-step_size , -step_size).reshape(-1, 1)
 			zinj_inclined_length  = np.linspace(np.round((zinj[-1] - junction_depth)/2), -junction_depth, N)
 			yinj_inclined_length = np.zeros((len(zinj_inclined_length), 1))
 			xend = xinj[-1]+inclined_length * np.sin(angle)
@@ -854,8 +1201,8 @@ class ULoopSBT(BaseReservoir):
 			yinj = np.concatenate((yinj, yinj_inclined_length))
 
 			# generate prod well profile
-			zprod = np.flip(zinj);
-			xprod = np.flip(xinj);
+			zprod = np.flip(zinj)
+			xprod = np.flip(xinj)
 			yprod = np.flip(yinj) + vertical_well_spacing;
 
 			# Generate Laterals
@@ -864,18 +1211,15 @@ class ULoopSBT(BaseReservoir):
 			y_ip = np.zeros((1,numberoflaterals))
 			z_ip = np.zeros((1,numberoflaterals))
 			for i in range(numberoflaterals):
-				y_ip[0, i] = yinj[-1]-(lateral_spacing*(numberoflaterals-1))/2+i*lateral_spacing-(yinj[-1]-yprod[-1])/2;
-				x_ip[0, i] = xinj[-1]+element_length*3*np.sin(angle);
-				z_ip[0, i] = zinj[-1]-element_length*3*np.cos(angle);
+				y_ip[0, i] = yinj[-1]-(lateral_spacing*(numberoflaterals-1))/2+i*lateral_spacing-(yinj[-1]-yprod[-1])/2
+				x_ip[0, i] = xinj[-1]+element_length*3*np.sin(angle)
+				z_ip[0, i] = zinj[-1]-element_length*3*np.cos(angle)
 
 			# Lateral feedways
 			x_feed = np.zeros((N, numberoflaterals))
 			y_feed = np.zeros((N, numberoflaterals))
 			z_feed = np.zeros((N, numberoflaterals))
 			for i in range(numberoflaterals):
-			#     x_feed[:,i] = np.linspace(3/4 * xinj[-1, 0] + x_ip[0, i]/4,xinj[-1, 0]/4 + x_ip[0, i]*3/4,N)
-			#     y_feed[:,i] = np.linspace(3/4 * yinj[-1, 0]+y_ip[0, i]/4, yinj[-1, 0]/4+y_ip[0, i]*3/4,N)
-			#     z_feed[:,i] = np.linspace(3/4 * zinj[-1, 0]+z_ip[0, 0/4, zinj[-1, 0]/4+z_ip[0, i]*3/4,N)
 				# we space things out by 1% to avoid zero segment lengths in SBT
 				x_feed[:,i] = np.linspace(xinj[-1, 0], x_ip[0, i] * 0.99, N)
 				y_feed[:,i] = np.linspace(yinj[-1, 0], y_ip[0, i] * 0.99, N)
@@ -905,9 +1249,6 @@ class ULoopSBT(BaseReservoir):
 			y_return = np.zeros((N, numberoflaterals))
 			z_return = np.zeros((N, numberoflaterals))
 			for i in range(numberoflaterals):
-			#     x_return[:,i] = np.linspace(3/4 * xprod[0, 0] + x_template_lateral[0, i]/4, xprod[0, 0]/4 + x_template_lateral[0, i]*3/4,N)
-			#     y_return[:,i] = np.linspace(3/4 * yprod[0, 0]+y_template_lateral[0, i]/4, yprod[0, 0]/4+y_template_lateral[0, i]*3/4,N)
-			#     z_return[:,i] = np.linspace(3/4 * zprod[0, 0]+z_template_lateral[0, i]/4, zprod[0, 0]/4+z_template_lateral[0, i]*3/4,N)
 				x_return[:,i] = np.linspace(x_template_lateral[-1, i] * 1.01, xprod[0, 0],N)
 				y_return[:,i] = np.linspace(y_template_lateral[-1, i] * 1.01, yprod[0, 0],N)
 				z_return[:,i] = np.linspace(z_template_lateral[-1, i] * 1.01, zprod[0, 0],N)
@@ -923,13 +1264,11 @@ class ULoopSBT(BaseReservoir):
 		else:
 			print("Running DEFALUT-U Closed Loop System Design ...")
 			# Coordinates of injection well (coordinates are provided from top to bottom in the direction of flow)
-			# self.zinj = np.arange(0, -self.well_depth -self.well_depth/8, -self.well_depth/8).reshape(-1, 1)
 			self.zinj = np.arange(0, -self.well_depth -self.dx, -self.dx).reshape(-1, 1)
 			self.yinj = np.zeros((len(self.zinj), 1))
 			self.xinj = -(self.lateral_length/2) * np.ones((len(self.zinj), 1))
 
 			# Coordinates of production well (coordinates are provided from bottom to top in the direction of flow)
-			# self.zprod = np.arange(-self.well_depth, 0 + self.well_depth/8, self.well_depth/8).reshape(-1, 1)
 			self.zprod = np.arange(-self.well_depth, 0 + self.dx, self.dx).reshape(-1, 1)
 			self.yprod = np.zeros((len(self.zprod), 1))
 			self.xprod = (self.lateral_length/2) * np.ones((len(self.zprod), 1))
@@ -956,6 +1295,9 @@ class ULoopSBT(BaseReservoir):
 		self.y = np.concatenate((self.yinj, self.yprod, self.ylat.flatten(order="F")[:,None]))
 		self.z = np.concatenate((self.zinj, self.zprod, self.zlat.flatten(order="F")[:,None]))
 
+		self.res_length = self.x.max() - self.x.min()
+		self.res_width = self.y.max() - self.y.min() + 2 * self.lateral_spacing
+
 		self.alpha_f = self.k_f / self.rho_f / self.cp_f  # Fluid thermal diffusivity [m2/s]
 		self.Pr_f = self.mu_f / self.rho_f / self.alpha_f  # Fluid Prandtl number [-]
 		self.alpha_m = self.k_m / self.rho_m / self.c_m  # Thermal diffusivity medium [m2/s]
@@ -963,7 +1305,7 @@ class ULoopSBT(BaseReservoir):
 		(np.ones(self.numberoflaterals - 1, dtype=int) * len(self.xlat))))
 		self.interconnections = np.cumsum(self.interconnections)  # lists the indices of interconnections between inj, prod,
 		# and laterals (this will used to take care of the duplicate coordinates of the start and end points of the laterals)
-		#print(interconnections)
+
 		self.radiusvector = np.concatenate([np.ones(len(self.xinj) + len(self.xprod) - 2) * self.vertical_diam/2, np.ones(self.numberoflaterals * len(self.xlat) - self.numberoflaterals) * self.lateral_diam/2])  # Stores radius of each element in a vector [m]
 		self.Dvector = self.radiusvector * 2  # Diameter of each element [m]
 		self.lateralflowallocation = self.lateralflowallocation / np.sum(self.lateralflowallocation)  # Ensure the sum equals 1
@@ -1073,8 +1415,6 @@ class ULoopSBT(BaseReservoir):
 		self.timeforlinesource = max(self.radiusvector)**2 / self.alpha_m * self.LimitCylinderModelRequired  # Calculates minimum time step size when line source model becomes applicable [s]
 		self.timeforfinitelinesource = max(self.Deltaz)**2 / self.alpha_m * self.LimitInfiniteModel  # Calculates minimum time step size when finite line source model should be considered [s]
 
-		# self.fpcminarg = min(self.Deltaz)**2 / (4 * self.alpha_m * (times[-1]))
-		# self.fpcmaxarg = max(self.Deltaz)**2 / (4 * self.alpha_m * (min(times[1:] - times[:-1])))
 		self.fpcminarg = min(self.Deltaz)**2 / (4 * self.alpha_m * (self.times_arr[-1] * 3600))
 		self.fpcmaxarg = max(self.Deltaz)**2 / (4 * self.alpha_m * (min(self.times_arr[1:] - self.times_arr[:-1]) * 3600))
 		self.Amin1vector = np.logspace(np.log10(self.fpcminarg) - 0.1, np.log10(self.fpcmaxarg) + 0.1, self.NoArgumentsFinitePipeCorrection)
@@ -1117,9 +1457,9 @@ class ULoopSBT(BaseReservoir):
 
 		self.mindexNPCP = np.where(np.min(self.SoverLSorted, axis=0) < self.LimitSoverL)[0][-1]  # Finding the index where the ratio is less than the limit
 
-		self.midpointsx = self.elementcenters[:, 0]  # x-coordinate of center of each element [m]
-		self.midpointsy = self.elementcenters[:, 1]  # y-coordinate of center of each element [m]
-		self.midpointsz = self.elementcenters[:, 2]  # z-coordinate of center of each element [m]
+		self.midpointsx = self.elementcenters[:, 0]
+		self.midpointsy = self.elementcenters[:, 1]
+		self.midpointsz = self.elementcenters[:, 2]
 		self.BBinitial = self.surface_temp - self.geothermal_gradient * self.midpointsz  # Initial temperature at center of each element [degC]
 
 		self.previouswaterelements = np.zeros(self.N)
@@ -1173,28 +1513,29 @@ class ULoopSBT(BaseReservoir):
 		self.TwMatrix = np.zeros((len(self.times_arr), self.N))         # Initializes the matrix that holds the fluid temperature over time
 		self.TwMatrix[0, :] = self.Twprevious
 
-	def plot_laterals(self, dpi=200):
-		fig = plt.figure(dpi=dpi)
-		ax = fig.add_subplot(111, projection='3d')
-
-		ax.plot(self.xinj, self.yinj, self.zinj, 'tab:blue', linewidth=4)
-		ax.plot(self.xprod, self.yprod, self.zprod, 'tab:red', linewidth=4)
-		for j in range(self.xlat.shape[1]):
-			ax.plot(self.xlat[:,j], self.ylat[:,j], self.zlat[:,j],
-					linewidth=2, color="black")#, label=f"Lateral-{j}")
-
-		ax.set_xlim([np.min(self.xlat) - 200, np.max(self.xlat) + 200])
-		ax.set_ylim([np.min(self.ylat) - 200, np.max(self.ylat) + 200])
-		ax.set_zlim([np.min(self.zlat) - 500, 0])
-		plt.legend(["Injector", "Producer", "Laterals"])
-
-		return fig
+		self.configure_well_dimensions()
 
 	def pre_model(self, t, m_prd, m_inj, T_inj):
+		"""Computations to be performed before stepping the reservoir model.
+
+		Args:
+			t (datetime): current timestamp.
+            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s.
+            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
+			T_inj (float): injection temperature in deg C.
+		"""
 		pass
 
 	def model(self, t, m_prd, m_inj, T_inj):
-		
+		"""Computations to be performed when stepping the reservoir model.
+
+		Args:
+			t (datetime): current timestamp.
+            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s.
+            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
+			T_inj (float): injection temperature in deg C.
+		"""
+
 		if self.FAST_MODE["DynamicFluidProperties"]:
 			self.rho_f = densitywater(self.Tres)
 			self.cp_f = heatcapacitywater(self.Tres) # J/kg-degC
@@ -1211,7 +1552,6 @@ class ULoopSBT(BaseReservoir):
 		Deltat = self.timestep.total_seconds() # Current time step size [s]
 		Tin = T_inj #injection temperature is the same for all doublets as they assumingly feed into a single power plant
 		m = m_prd.mean() #take the mean of all doublets
-		# self.time_passed_seconds = (t - self.time_init).total_seconds()
 
 		# Velocities and thermal resistances are calculated each time step as the flow rate is allowed to vary each time step
 		self.uvertical = m / self.rho_f / (np.pi * (self.vertical_diam/2) ** 2)  # Fluid velocity in vertical injector and producer [m/s]
@@ -1429,15 +1769,13 @@ class ULoopSBT(BaseReservoir):
 				self.NPOP[self.remainingindices.reshape((len(self.remainingindices),1))] = self.NPOPfls
 				self.NPOP = self.NPOP.reshape((self.dimensions[1],self.dimensions[0])).T
 
-
-
 		# Put everything together and calculate BB (= impact of all previous heat pulses from old neighbouring elements on current element at current time)
 		#  
 			self.Qindicestotake = self.SortedIndicesRelevant.ravel().reshape((self.N * int(self.lastneighbourtoconsider[self.counter]), 1))*np.ones((1,self.counter-1)) + \
 							np.ones((self.N * int(self.lastneighbourtoconsider[self.counter]), 1)) * self.N * np.arange(self.counter - 1)
 			self.Qindicestotake = self.Qindicestotake.astype(int)
 			self.Qlinear = self.Q.T.ravel()[self.Qindicestotake]
-		# Qlinear = Qlinear[:,:,0]
+
 			self.BBPS = self.NPOP * self.Qlinear
 			self.BBPS = np.sum(self.BBPS, axis=1)
 			self.BBPSindicestotake = np.arange(self.N).reshape((self.N, 1)) + self.N * np.arange(int(self.lastneighbourtoconsider[self.counter])).reshape((1, int(self.lastneighbourtoconsider[self.counter])))
@@ -1508,7 +1846,6 @@ class ULoopSBT(BaseReservoir):
 
 		##########
 		# Calculating the fluid outlet temperature at the top of the first element
-		self.top_element_index = len(self.xinj) + len(self.xprod) - 3
 		Tw_final_injector = self.TwMatrix[self.counter, 0:(self.interconnections[0] - 1)]  # Final fluid temperature profile in injection well [°C]
 		Tw_final_producer = self.TwMatrix[self.counter, self.interconnections[0]:self.interconnections[1] - 1]
 
@@ -1516,159 +1853,25 @@ class ULoopSBT(BaseReservoir):
 		self.T_prd_bh = np.array(self.num_prd*[self.Tres], dtype='float')
 		self.T_inj_wh = np.array(self.num_inj*[min(Tw_final_injector)], dtype='float')
 
+	def configure_well_dimensions(self):
+		"""Configuration specifications of a doublet. It requires the specification of a doublet, including the producer dimensions (self.xprod, self.yprod, self.zprod), injector dimensions (self.xinj, self.yinj, self.zinj) and reservoir vertices (self.verts). See Class PercentageReservoir for example implementation.
 
-class VariableGringarten(BaseReservoir):
-	"""Modified Avdonin model to incorporate unsteady-state flow."""
-	def __init__(self,
-				 Tres_init,
-				 Pres_init,
-				 geothermal_gradient,
-				 surface_temp,
-				 L,
-				 time_init,
-				 well_depth,
-				 prd_well_diam,
-				 inj_well_diam,
-				 num_prd,
-				 num_inj,
-				 waterloss,
-				 power_plant_type,
-				 pumpeff,
-				 ramey=True,
-				 pumping=True,
-     			 krock=3, # saturated thermal conductivity
-        		 rhorock=2600, #g/cc
-           		 cprock=1000, #J/kg-C
-              	 impedance = 0.1,
-				 thickness=200, #m
-                 PI = 20, # kg/s/bar
-                 II = 20, # kg/s/bar
-                 SSR = 1.0,
-                 N_ramey_mv_avg=168,
-                 V_res=1,
-                 phi_res=0.1,
-                 FAST_MODE={"on": False, "period": 3600*8760/12, "accuracy": 5},
-                 phi_frac=0.9,
-                 num_fractures=10,
-                 fracture_height=1000,
-                 fracture_halflength = 500,
-                 fracture_apreture=0.1,
-                 lateral_length=1000):
+		"""
 
-		"""Define attributes of the Subsurface class."""
-		super(VariableGringarten, self).__init__(Tres_init,
-											geothermal_gradient,
-											surface_temp,
-											L,
-											time_init,
-											well_depth,
-											prd_well_diam,
-											inj_well_diam,
-											num_prd,
-											num_inj,
-											waterloss,
-											power_plant_type,
-											pumpeff,
-											ramey,
-											pumping,
-											krock,
-											rhorock,
-											cprock,
-											impedance,
-											thickness,
-											PI, # kg/s/bar
-											II, # kg/s/bar
-											SSR,
-											N_ramey_mv_avg,
-											FAST_MODE)
+		self.v = [
+					[np.min(self.x), np.min(self.y) - 5 * self.lateral_spacing, -self.well_tvd + self.res_thickness/2],
+					[np.min(self.x), np.max(self.y) + 5 * self.lateral_spacing, -self.well_tvd + self.res_thickness/2],
+					[np.max(self.x), np.max(self.y) + 5 * self.lateral_spacing, -self.well_tvd + self.res_thickness/2],
+					[np.max(self.x), np.min(self.y) - 5 * self.lateral_spacing, -self.well_tvd + self.res_thickness/2],
+					[np.max(self.x), np.min(self.y) - 5 * self.lateral_spacing, -self.well_tvd - self.res_thickness/2],
+					[np.min(self.x), np.min(self.y) - 5 * self.lateral_spacing, -self.well_tvd - self.res_thickness/2],
+					[np.min(self.x), np.max(self.y) + 5 * self.lateral_spacing, -self.well_tvd - self.res_thickness/2],
+					[np.max(self.x), np.max(self.y) + 5 * self.lateral_spacing, -self.well_tvd - self.res_thickness/2],
+				]
 
-		self.fracture_spacing = lateral_length/num_fractures
-		self.fracture_halflength = fracture_halflength
-		self.rhow_prd_bh = densitywater(self.T_prd_bh.mean())
-		self.cw_prd_bh = heatcapacitywater(self.T_prd_bh.mean()) # J/kg-degC
-
-		self.kwater = 0.6 #W/m-K
-		self.rhofrac = phi_frac * self.rhow_prd_bh + (1-phi_frac) * rhorock
-		self.kfrac = phi_frac * self.kwater + (1-phi_frac) * krock
-
-		self.cfrac = phi_frac * self.cw_prd_bh + (1-phi_frac) * cprock
-		self.lateral_length = lateral_length
-		self.A = num_fractures * fracture_apreture * fracture_height # fracture cross-sectional area [m2]
-		self.D = self.kfrac / (self.rhow_prd_bh * self.cw_prd_bh) #m2/s
-		self.uw = 50/ self.rhow_prd_bh / self.A # m/s with random flow rate initialization of 50 kg/s
-		self.V = self.uw * self.rhow_prd_bh * self.cw_prd_bh / (self.rhofrac * self.cfrac)
-		self.DR = self.krock / (self.rhorock * self.cprock) #m2/s
-  
-		self.Vs = np.array([self.V]) # randomly initialized at 100kg/s per producer
-		self.T_injs = np.array([70]) # randomly initialized
-		self.timesteps = np.array([1]) # first record gets minimal weight
-		self.frac_sections = np.linspace(0, fracture_halflength, 10)
-		self.T_frac = np.array([[self.Tres_init for _ in self.frac_sections]])
-		self.source_term = np.array([[self.Tres_init for _ in self.frac_sections]])
-
-	def frac_pde_solution(self, tau, t, x, V):
-		t_mask = self.timesteps <= (t-tau)
-		coeff = (self.T_injs[t_mask][-1]-self.Tres_init)/np.sqrt(16 * np.pi * self.D * tau**3)
-		term1 = (x - V*tau) * np.exp(- (x - V*tau)**2/(4 * self.D * tau))
-		term2 = (x + V*tau) * np.exp(V*x/self.D - (x + V*tau)**2/(4 * self.D * tau))
-		return  coeff * (term1 + term2)
-	def source_frac_pde_solution(self, tau, y, t, x, V):
-		tp = t - tau
-		t_mask = self.timesteps <= tp
-		x_mask = self.frac_sections <= x
-		term1 = self.source_term[t_mask[-1]][x_mask[-1]]
-		term2 = np.where(tp>0,1,0)/np.sqrt(4 * np.pi * self.D * tp)
-		term3 = np.exp(-(y - x + V * tp)**2/(4 * self.D * tp))
-		term4 = np.exp(V*x/self.D - (y + x + V * tp)**2/(4 * self.D * tp))
-		G = term2 * (term3 - term4)
-		return term1 * G
-
-	def rock_pde_solution(self, tau, t, x):
-		t_mask = self.timesteps <= (t-tau)
-		x_mask = self.frac_sections <= x
-		term1 = self.T_frac[t_mask[-1]][x_mask[-1]]
-		term2 = 1/(2*np.sqrt(self.DR*np.pi*tau**3))
-		return  term1 * term2
-
-	def pre_model(self, t, m_prd, m_inj, T_inj):
-		self.uw = m_prd.sum() / self.rhow_prd_bh / self.A # m/s
-		self.V = self.uw * self.rhow_prd_bh * self.cw_prd_bh / (self.rhom * self.cm)
-		self.Vs = np.append(self.Vs, self.V)
-		self.T_injs = np.append(self.T_injs, T_inj)
-		self.time_passed_seconds = (t - self.time_init).total_seconds()
-		self.timesteps = np.append(self.timesteps, self.time_passed_seconds)
-
-	def model(self, t, m_prd, m_inj, T_inj):
-		self.rhow_prd_bh = densitywater(self.T_prd_bh.mean())
-		self.cw_prd_bh = heatcapacitywater(self.T_prd_bh.mean()) # J/kg-degC
-
-		self.Vavg = self.Vs.mean()
-		Trock_temp = []
-		for x in self.frac_sections:
-			rhs, _ = integrate.quad(self.rock_pde_solution, 0, self.time_passed_seconds,
-                           			(self.time_passed_seconds, x),
-                              		epsabs=1e-3, epsrel=1e-3, maxp1=500, limlst=500)
-			Trock_temp.append(rhs + self.Tres_init)
-		self.source_term = np.append(self.source_term, Trock_temp)
-
-		Tfrac_temp = []
-		for x in self.frac_sections:
-			rhs1, _ = integrate.quad(self.frac_pde_solution, 0, self.time_passed_seconds, 
-						(self.time_passed_seconds, x, self.Vavg),
-					epsabs=1e-3, epsrel=1e-3, maxp1=500, limlst=500)
-      
-			rhs2, _ = integrate.nquad(self.source_frac_pde_solution,
-                            		[[0, self.time_passed_seconds], [0, self.fracture_halflength]], 
-									(self.time_passed_seconds, x, self.Vavg),
-								epsabs=1e-3, epsrel=1e-3, maxp1=500, limlst=500)
-			rhs = rhs1 + rhs2
-			Tres_temp = rhs + self.Tres_init
-
-			Tfrac_temp.append(Tres_temp)
-
-		self.T_frac = np.append(self.T_frac, Tfrac_temp)
-
-		self.Tres = self.T_frac[-1][-1]
+		self.v = np.array(self.v)
+		self.f = [[0,1,2,3], [4,5,6,7], [0, 1, 6, 5], [1, 2, 7, 6], [2, 3, 4, 7], [0, 3, 4, 5]]
+		self.verts =  [[self.v[i] for i in p] for p in self.f]
 
 if __name__ == '__main__':
 	pass

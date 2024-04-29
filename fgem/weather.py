@@ -9,12 +9,17 @@ class Weather:
         pass
     
     def create_weather_model(self,
-                                   filepath,
-                                   resample=False
-                                   ):
+                            filepath,
+                            resample=False
+                            ):
         
-        """Load and preprocess weather data."""
-        
+        """Load and preprocess weather data.
+
+        Args:
+            filepath (str, optional): If available, csv filepath to weather data. Defaults to None.
+            resample (bool, optional): whether or not to resample the project to a specific timestep (Options: "1Y", "1m", "1w", "1d", "1h" for yearly, monthly, weekly, daily, or hourly timestepping). Defaults to False.
+        """
+
         self.df = pd.read_csv(filepath)
         self.df["Date"] = pd.to_datetime(self.df.time if "time" in self.df.columns else self.df.Date)
         self.df.rename(columns={'temp': 'T0', 'wspd':'wind_speed'}, inplace=True)
@@ -40,7 +45,14 @@ class Weather:
     def amb_temp(self,
                  t):
         
-        """Query ambient temperature for a point in time."""
+        """Query ambient temperature for a point in time.
+
+        Args:
+            t (datetime): timestamp
+
+        Returns:
+            float: ambient temperature in deg C
+        """
         
         if 'min' in self.resample:
             return self.df.loc[(self.df.month == t.month) & (self.df.day == t.day) & (self.df.hour == t.hour) & (self.df.minute == t.minute), "T0"].mean()

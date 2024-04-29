@@ -8,10 +8,10 @@ from scipy.optimize import curve_fit
 
 class TabularPowerMarket:
 
-    """Power markets class."""
+    """Tabular power markets class."""
 
     def __init__(self):
-        """Initating attributes for the TabularPowerMarket class."""
+        """Initating attributes."""
         pass
 
     def create_energy_market(self,
@@ -24,9 +24,19 @@ class TabularPowerMarket:
                             fat_factor=1,
                             fat_window=24,
                                 ):
+        """Loading and processnig wholesale market data.
 
-        """Loading and preprocessnig wholesale market data."""
-        
+        Args:
+            filepath (str, optional): If available, csv filepath to market data. Defaults to None.
+            energy_price (float, optional): energy price in USD/MWh. Defaults to 40.
+            recs_price (float, optional): renewable energy credits (RECs) price in USD/MWh. Defaults to 30.
+            L (int, optional): project lifetime in years. Defaults to 30.
+            time_init (datetime, optional): project start date. Defaults to pd.to_datetime('today').
+            resample (bool, optional): whether or not to resample the project to a specific timestep (Options: "1Y", "1m", "1w", "1d", "1h" for yearly, monthly, weekly, daily, or hourly timestepping). Defaults to False.
+            fat_factor (float, optional): using mean diversion to make the arbitrage opportunity more pronounced. Defaults to 1.
+            fat_window (int, optional): window considered when applying mean diversion to make the arbitrage opportunity more pronounced. Defaults to 24.
+        """
+
         if filepath:
             self.df = pd.read_csv(filepath)
             try:
@@ -42,7 +52,7 @@ class TabularPowerMarket:
         
         if resample:
             self.resample = resample
-            self.df = self.df.resample(rule=resample, on='Date').mean() # I use the mean statistic here as it is reasonable and yields resmapling at hour zero
+            self.df = self.df.resample(rule=resample, on='Date').mean()
         
         self.df.reset_index(inplace=True)
         self.df['TimeDiff'] = self.df.Date.diff().bfill()
@@ -79,8 +89,14 @@ class TabularPowerMarket:
                                 capacity_price=100,
                                 col="capacity cost",
                                 convert_to_usd_per_mwh=True):
-        
-        """Load and preprocess capacity market data."""
+        """Load and process capacity market data.
+
+        Args:
+            filepath (str, optional): csv filepath to capacity market data, if available. Defaults to None.
+            capacity_price (float, optional): capacity price in USD/kW-year. Defaults to 100.
+            col (str, optional): column header to be used for capacity price in the created dataframe. Defaults to "capacity cost".
+            convert_to_usd_per_mwh (bool, optional): whether or not to convert the capacity price from USD/kW-year to USD/MWh. Defaults to True.
+        """
 
         if filepath:
             self.df_capacity = pd.read_csv(filepath)
@@ -96,85 +112,97 @@ class TabularPowerMarket:
     def get_market_price(self,
                          t,
                          col):
-        """Query wholesale market data for a given point of time."""
+        """Query wholesale market for a given point of time.
+
+        Args:
+            t (datetime): timestamp
+            col (str): energy price column name
+
+        Returns:
+            float: energy price in USD/MWh
+        """
         
         if 'min' in self.resample:
             return self.df.loc[(self.df.year == t.year) & (self.df.month == t.month) & (self.df.day == t.day) & (self.df.hour == t.hour) & (self.df.minute == t.minute), col].mean()
         else:
             return self.df.loc[(self.df.year == t.year) & (self.df.month == t.month) & (self.df.day == t.day) & (self.df.hour == t.hour), col].mean()
 
-    def get_realtime_price(self,
-                     t):
-        """Query real-time wholesale market data."""
-        return self.get_market_price(col="price")
-
     def get_recs_price(self,
                      t):
-        """Query renewable energy credits market data."""
+        """Query RECs market for a given point of time.
+
+        Args:
+            t (datetime): timestamp
+
+        Returns:
+            float: energy price in USD/MWh
+        """
         return self.get_market_price(col="recs_price")
     
     def get_capacity_price(self,
                         year):
 
-        """Query capacity market data for a point of time."""
+        """Query wholesale market for a given point of time.
+
+        Args:
+            year (int): year to get data
+
+        Returns:
+            float: energy price in either USD/MWh or USD/kW-year
+        """
 
         return self.capacity_dict[year]
-
-    # def elcc_model(self, x, a, b, c):
-    #     year, duration = x
-    #     year = np.maximum((year - self.x_min[0]) / (self.x_max[0] - self.x_min[0]), 0.0) # in case the provided year is smaller than the smallest in the dataset
-    #     duration = (duration - self.x_min[1]) / (self.x_max[1] - self.x_min[1])
-    #     return 1/(1+np.exp(-(a * duration + b * year**(-0.1) + c)))
-
-    # def create_elcc_forecast(self):
-    #     X = np.array([[2023, 4],
-    #                 [2023, 6],
-    #                 [2023, 8],
-    #                 [2024, 4],
-    #                 [2024, 6],
-    #                 [2024, 8],
-    #                 [2025, 4],
-    #                 [2025, 6],
-    #                 [2025, 8],
-    #                 [2026, 4],
-    #                 [2026, 6],
-    #                 [2026, 8]])
-    #     self.x_min = np.min(X, axis=0)
-    #     self.x_max = np.max(X, axis=0)
-    #     y = np.array([0.963, 0.98, 0.982, 0.907, 0.934, 0.943, 0.742, 0.796, 0.822, 0.69, 0.751, 0.782])
-    #     self.popt, self.pcov = curve_fit(self.elcc_model, (X[:,0], X[:,1]), y)
 
     def create_elcc_forecast(self,
                             filepath=None,
                             battery_elcc = 1.0,
-                            battery_duration=None,
-                            battery_lifetime=None,
                             start_year=None,
                             col="elcc"):
-        
-        """Load and preprocess effective load carrying capacity (ELCC) data for Li-ion batteries."""
-        
+        """Create market for the effective load carrying capacity (ELCC) of batteries.
+
+        Args:
+            filepath (str, optional): csv file path to ELCC data, if available. Defaults to None.
+            battery_elcc (float, optional): battery ELCC value. Defaults to 1.0.
+            start_year (int, optional): start year. Defaults to None.
+            col (str, optional): column name where ELCC can be accessed. Defaults to "elcc".
+        """
+
         if filepath and battery_duration:
             self.df_elcc = pd.read_csv(filepath)
             self.elcc_dict = self.df_elcc.set_index("Year")[col].to_dict()
-            self.df["battery_elcc"] = self.df["year"].apply(lambda t: self.get_elcc(t, battery_duration[int(t-start_year > battery_lifetime)]))
+            self.df["battery_elcc"] = self.df["year"].apply(lambda t: self.get_elcc(t))
         
         else:
             self.df["battery_elcc"] = battery_elcc
 
     def get_elcc(self,
-                year,
-                duration):
-        """Query effective load carrying capacity (ELCC) data for Li-ion batteries."""
+                year):
+        """Query effective load carrying capacity (ELCC) data for batteries.
+
+        Args:
+            year (int): year to get data
+
+        Returns:
+            float: ELCC
+        """
+
+        """"""
         return self.elcc_dict[year]
-        # return self.elcc_model((year, duration), *self.popt)
 
     def plot_prices(self,
                     show=True,
                     ymin_percentile=10,
                     ymax_percentile=90):
-        
-        """Visualize the loaded and preprocessed wholesale market data."""
+        """Visualize the loaded and preprocessed wholesale market data.
+
+        Args:
+            show (bool, optional): whether or not to show the figure upon plotting. Defaults to True.
+            ymin_percentile (float, optional): minimum price percentile to threshold plot range. Defaults to 10.
+            ymax_percentile (float, optional): maximum price percentile to threshold plot range. Defaults to 90.
+
+        Returns:
+            _type_: _description_
+        """
         
         df_gruoped_mean = self.df.groupby(by="hour").mean()
         df_gruoped_std = self.df.groupby(by="hour").std()

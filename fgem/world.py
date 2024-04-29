@@ -2,18 +2,13 @@ import math
 import pandas as pd
 import pdb
 import matplotlib.pyplot as plt
+import seaborn as sns
 from collections import defaultdict
 import os
 import sys
+import warnings
 from datetime import timedelta, datetime
-
-PROJECT_ROOT = os.path.abspath(os.path.join(
-                  os.path.dirname(__file__), 
-                  os.pardir)
-)
-sys.path.append(PROJECT_ROOT)
-
-from fgem.utils.utils import compute_drilling_cost, compute_npv
+from fgem.utils.utils import compute_drilling_cost, compute_npv, plot_cols
 from fgem.utils.constants import SMALL_NUM, SMALLER_NUM
 from fgem.subsurface import *
 from fgem.powerplant import *
@@ -21,13 +16,14 @@ from fgem.markets import *
 from fgem.weather import *
 from fgem.storage import *
 from pyXSteam.XSteam import XSteam
+colors = 24*sns.color_palette()
 
 class World:
-    
+
     """High-level class to define a project involving upstream, midstream, and downstream components."""
     
     def __init__(self, config):
-        
+
         """Defining attributes for the World class."""
         
         # Set default values at first
@@ -47,8 +43,8 @@ class World:
         self.start_year = self.time_init.year
         self.end_year = self.start_year + self.L
         self.height = 2 * self.diameter
-        self.num_inj = int(np.floor(self.inj_prd_ratio * self.num_prd)) # underestimate the need for injectors since devlopers would often prefer to drill more later if needed
-        self.effective_ppc = self.ppc * (self.num_prd > 0) # zero if either no pp or no wells
+        self.num_inj = max(int(np.floor(self.inj_prd_ratio * self.num_prd)), 1) # underestimate the need for injectors since devlopers would often prefer to drill more later if needed
+        self.effective_ppc = self.ppc * (self.num_prd > 0) # zero if either no power plant or no wells installed
         self.turbine_power_output_MWe = 0
         self.turbine_power_generation_MWh = 0
         self.m_market = 0
@@ -64,7 +60,6 @@ class World:
         self.df_records = pd.DataFrame()
         self.pp_type_thresh = 175 # if reservoir temperature is greater, then use a flash power plant
         self.half_lateral_length = self.lateral_length/2
-        # self.Tres_init = self.Tres_init if self.Tres_init else self.surface_temp + self.geothermal_gradient * self.well_depth/1000
 
         if not self.power_plant_type:
             self.power_plant_type = "Binary" if self.Tres_init < self.powerplant_type_thresh else "Flash"
@@ -77,7 +72,7 @@ class World:
         self._reset()
 
     def step_update_record(self,
-                            m_prd=None,
+                            m_prd=80,
                             m_inj=None,
                             m_tes_in=0,
                             m_tes_out=0,
@@ -86,31 +81,42 @@ class World:
                             p_bat_out=0,
                             m_bypass=0,
                             keep_records=True):
-        
+        """One function to step, update, and record the project in one go.
+
+        Args:
+            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s. Defaults to 80.
+            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s. Defaults to None.
+            m_tes_in (float, optional): mass flow into thermal energy storage tank in kg/s. Defaults to 0.
+            m_tes_out (float, optional): mass flow out of thermal energy storage tank in kg/s. Defaults to 0.
+            p_bat_ppin (float, optional): power rate at which battery is charged directly from the geothermal power plant in MW. Defaults to 0.
+            p_bat_gridin (float, optional): power rate at which battery is charged directly from the grid in MW. Defaults to 0.
+            p_bat_out (float, optional): power rate at which battery is discharged to the grid in MW. Defaults to 0.
+            m_bypass (Union[ndarray,float], optional): mass flow rates to be bypassed away from the power plant or turbine in kg/s. Defaults to 0.
+            keep_records (bool, optional): whether or not to store records at each simulation timestep. Defaults to True.
+        """
+                
         self.update_state(m_prd, m_inj, 
                           m_tes_in, m_tes_out, 
                           p_bat_ppin, p_bat_gridin, p_bat_out, 
                           m_bypass)
         self.step()
         self.record_step()
-        """One function to step, update, and record the project in one go."""
 
     def step(self):
-        
-        """Stepping the project in time."""
+        """Stepping the project in time.
+        """
         self.power_output_MWh_kg = self.powerplant.compute_geofluid_consumption(self.T_prd_wh, self.T_amb)
 
         # Step TES, if required
         if self.st:
-            # self.m_tes_in = np.min(self.m_tes_in, self.m_prd.sum()) #constrain to available production
-            self.m_tes_in, self.m_tes_out = self.st.step(self.T_amb, self.m_tes_in, self.m_tes_out, self.T_prd_wh)
+            self.m_tes_in, self.m_tes_out, self.st_violation = self.st.step(self.T_amb, self.m_tes_in, self.m_tes_out, self.T_prd_wh)
             self.T_tes_out = self.st.Tw
 
         # Mass used to charge battery
         if self.battery:
-            violation = self.battery.step(self.p_bat_in, self.p_bat_out)
-            if violation:
-                self.p_bat_out, self.p_bat_in, self.p_bat_ppin, self.p_bat_gridin = 0.0, 0.0, 0.0, 0.0
+            self.p_bat_out, self.p_bat_in, self.battery_violation = self.battery.step(self.p_bat_in, self.p_bat_out)
+            if self.battery_violation:
+                self.p_bat_ppin, self.p_bat_gridin = 0.0, 0.0
             
             self.m_battery = min(self.p_bat_ppin / self.power_output_MWh_kg / 3600, self.m_turbine) if (self.num_prd > 0) else 0.0
             self.battery_power_output_MWe = self.battery.roundtrip_eff * self.p_bat_out
@@ -159,14 +165,25 @@ class World:
                     p_bat_out=0,
                     m_bypass=0,
                     timestep=None):
-        
-        """Update the state of the project."""
+        """Update the project state.
+
+        Args:
+            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s. Defaults to 80.
+            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s. Defaults to None.
+            m_tes_in (float, optional): mass flow into thermal energy storage tank in kg/s. Defaults to 0.
+            m_tes_out (float, optional): mass flow out of thermal energy storage tank in kg/s. Defaults to 0.
+            p_bat_ppin (float, optional): power rate at which battery is charged directly from the geothermal power plant in MW. Defaults to 0.
+            p_bat_gridin (float, optional): power rate at which battery is charged directly from the grid in MW. Defaults to 0.
+            p_bat_out (float, optional): power rate at which battery is discharged to the grid in MW. Defaults to 0.
+            m_bypass (Union[ndarray,float], optional): mass flow rates to be bypassed away from the power plant or turbine in kg/s. Defaults to 0.
+            timestep (datetime.timedelta, optional): simulation timestep size. Defaults to None.
+        """
         # Update project timestep if indicated by timestep argument
         self.update_timestep_for_all_components(timestep)
         self.time_curr += self.timestep
         self.step_idx += 1
         self.state = self.df_market.iloc[self.step_idx]
-        self.T_amb = self.state["T0"] #self.weather.amb_temp(self.time_curr) Rather, we will get it externally
+        self.T_amb = self.state["T0"]
         self.m_tes_in = m_tes_in
         self.m_tes_out = m_tes_out
         self.p_bat_ppin = p_bat_ppin
@@ -201,7 +218,8 @@ class World:
         self.T_inj = self.powerplant.T_inj
 
     def record_step(self):
-        """Recording information about the most recent information in the project."""
+        """Recording information about the most recent information in the project.
+        """
         
         self.PumpingPower = self.reservoir.PumpingPower_ideal
         self.PumpingPowerInj = self.reservoir.PumpingPowerInj
@@ -271,8 +289,8 @@ class World:
             self.records["Bat Energy Content [MWh]"].append(self.battery.energy_content)
 
     def compute_economics(self):
-        
-        """Compute the project capex/opex economics."""
+        """Compute the project capex/opex economics.
+        """
         
         self.df_records = pd.DataFrame.from_dict(self.records).set_index("World Time")
         self.df_records.iloc[0] = self.df_records.iloc[1] # overwrite the zero step as it is based on default params before the simulation actually starts
@@ -317,14 +335,11 @@ class World:
         Cpumping = Cpumpsinj
         
         # Production pumps are considered in ORC cases with low-med enthalpy resources
-        # if "binary" in self.power_plant_type.lower():
         prodpumphp = np.stack(self.records["Production Pumping Power [MWe]"]).max(axis=0)*1341 #np.max(PumpingPowerProd)/nprod*1341
         Cpumpsprod = np.sum((1.5*(1750*(prodpumphp)**0.7 + 5750*(prodpumphp)**0.2  + 10000 + self.reservoir.pumpdepth*50*3.281)) * np.where(prodpumphp>0, 1, 0)) #see page 46 in user's manual assuming rental of rig for 1 day.
         self.prodpump_capex = Cpumpsprod/1e6 #$MM
         self.capex["Production Pumps"] = np.array([self.prodpump_capex] + [0 for _ in range(self.L-1)])
         Cpumping += Cpumpsprod
-        # else:
-        #     self.capex["Production Pumps"] = np.zeros(self.L)
         
         self.injection_stimulation_capex = self.num_inj*2.5 if self.SSR>0.0 else 0.0 #$MM
         self.capex["Injection Stimulation"] = np.array([self.injection_stimulation_capex] + [0 for _ in range(self.L-1)])
@@ -334,7 +349,6 @@ class World:
         self.capex["Gathering System"] = np.array([self.Cgath] + [0 for _ in range(self.L-1)])
         self.Cpipe = (750*self.pipinglength)/1e6
         self.capex["Pipelines"] = np.array([self.Cpipe] + [0 for _ in range(self.L-1)])
-        # self.opex["wells & Power Plant"] = self.upstream_opex * (1+self.opex_escalation)**np.arange(self.L) * ((self.ppc > 0) + (self.num_prd > 0))/2 #$MM/year escalated (levelized O&M cost including pumping Requirements)
         
         # Upstream OPEX
         self.Claborcorrelation = max(1.1*(589.*math.log(self.ppc)-304.)/1e3, 0) #$MM/year
@@ -367,7 +381,7 @@ class World:
         self.opex["Battery"] = np.zeros(self.L)
 
         for i, (battery_duration, battery_power_capacity) in enumerate(zip(self.battery_duration, self.battery_power_capacity)):
-            # itc = self.itc # if i == 0 else 0.0 # no ITC for battery-2 in the future?
+            #TODO: itc = self.itc # if i == 0 else 0.0 # no ITC for battery-2 in the future?
             
             installation_year = min(i * self.battery_lifetime, self.L)
             retirement_year = min((i+1) * self.battery_lifetime, self.L)
@@ -418,6 +432,11 @@ class World:
         self.cashout = self.capex_total + self.opex_total ##
     
     def update_timestep_for_all_components(self, timestep):
+        """Update the simulation timestep size across all project components.
+
+        Args:
+            timestep (datetime.timedelta): simulation timestep size
+        """
         if timestep:
             self.timestep = timestep
             self.timestep_hrs = self.timestep.total_seconds() / 3600
@@ -425,8 +444,8 @@ class World:
                 if component:
                     component.timestep = self.timestep
     def _reset(self):
-        
-        """Reseting the project to its initial state."""
+        """Reseting the project to its initial state.
+        """
         
         self.records = defaultdict(list)
 
@@ -448,8 +467,6 @@ class World:
 
         self.market.create_elcc_forecast(filepath=self.battery_costs_filepath,
                                         battery_elcc=self.battery_elcc,
-                                        battery_duration=self.battery_duration,
-                                        battery_lifetime=self.battery_lifetime,
                                         start_year=self.start_year)
 
         self.df_market = self.market.df.copy()
@@ -491,14 +508,14 @@ class World:
                                         prd_well_diam=self.prd_well_diam, inj_well_diam=self.inj_well_diam, num_prd=self.num_prd, 
                                         num_inj=self.num_inj, waterloss=self.waterloss,
                                         power_plant_type=self.power_plant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II, SSR=self.SSR, V_res=self.V_res, phi_res=self.phi_res,
-                                        rock_energy_recovery=self.rock_energy_recovery, FAST_MODE=self.FAST_MODE, ramey=self.ramey)
+                                        rock_energy_recovery=self.rock_energy_recovery, FAST_MODE=self.FAST_MODE, ramey=self.ramey, PumpingModel=self.PumpingModel)
         elif self.reservoir_type == "diffusion_convection":                
-            self.reservoir = DiffusionConvection(Tres_init=self.Tres_init, Pres_init=self.Pres_init, geothermal_gradient=self.geothermal_gradient, surface_temp=self.surface_temp,
+            self.reservoir = DiffusionConvection(Tres_init=self.Tres_init, geothermal_gradient=self.geothermal_gradient, surface_temp=self.surface_temp,
                                         L=self.L, time_init=self.time_init, well_depth=self.well_depth, 
                                         prd_well_diam=self.prd_well_diam, inj_well_diam=self.inj_well_diam, num_prd=self.num_prd, 
                                         num_inj=self.num_inj, waterloss=self.waterloss, 
                                         power_plant_type=self.power_plant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II, SSR=self.SSR, 
-                                        V_res=self.V_res, phi_res=self.phi_res, lateral_length=self.lateral_length, thickness=self.thickness, 
+                                        V_res=self.V_res, phi_res=self.phi_res, lateral_length=self.lateral_length, res_thickness=self.res_thickness, 
                                         krock=self.krock, FAST_MODE=self.FAST_MODE, PumpingModel=self.PumpingModel, ramey=self.ramey)
         elif self.reservoir_type == "uloop":
             self.reservoir = ULoopSBT(Tres_init=self.Tres_init, Pres_init=self.Pres_init, surface_temp=self.surface_temp, geothermal_gradient=self.geothermal_gradient,
@@ -517,7 +534,7 @@ class World:
                             prd_well_diam=self.prd_well_diam, inj_well_diam=self.inj_well_diam, num_prd=self.num_prd, 
                             num_inj=self.num_inj, waterloss=self.waterloss,
                             power_plant_type=self.power_plant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II, SSR=self.SSR, 
-                            drawdp=self.drawdp, plateau_length=self.plateau_length, FAST_MODE=self.FAST_MODE, ramey=self.ramey)
+                            drawdp=self.drawdp, plateau_length=self.plateau_length, FAST_MODE=self.FAST_MODE, ramey=self.ramey, PumpingModel=self.PumpingModel)
         
         # Create power plant
         if "binary" in self.power_plant_type.lower():
@@ -528,16 +545,25 @@ class World:
         self.update_timestep_for_all_components(self.timestep)
 
     def plot_price_distribution(self):
-        
-        """Plotting power wholesale market price distribution."""
+        """Plotting power wholesale market price distribution
+
+        Returns:
+            matplotlib.figure.Figure: figure
+        """
         
         fig = plt.figure(figsize=(8, 5))
-        self.df.price.hist(histtype='step', bins=200)
-        plt.xlim([self.df.price.min(), self.df.price.max()])
+        self.df_market.price.hist(histtype='step', bins=200)
+        plt.xlim([self.df_market.price.min(), self.df_market.price.max()])
+
+        return fig
        
     def config_to_placeholders(self, config):
         
-        """Create attributes for all keys and values in a nested configuration dictionary."""
+        """Create attributes for all keys and values in a nested configuration dictionary.
+
+        Args:
+            config (dict): project configuration
+        """
         
         for top_val in config.values():
             for key1, val1 in top_val.items():
@@ -546,9 +572,108 @@ class World:
                     for key2, val2 in val1.items():
                         exec("self." + key2 + '=val2')
 
+    def plot_economics(self, 
+                       figsize=(10, 10),
+                       dpi=150, 
+                       fontsize=10, 
+                       colors=colors):
+        """Plot CAPEX and OPEX as pie charts.
+
+        Args:
+            figsize (tuple, optional): figure size. Defaults to (10, 10).
+            dpi (int, optional): resolution dpi. Defaults to 150.
+            fontsize (int, optional): font size. Defaults to 10.
+            colors (list, optional): color of pie slices. Defaults to seaborn.color_palette().
+
+        Returns:
+            matplotlib.figure.Figure: figure
+        """
+        if not hasattr(self, "present_capex_per_unit"):
+            warnings.warn("Warning: economics are computed based on the latest simulation timestep.")
+            self.compute_economics()
+
+        fig, axes = plt.subplots(1, 2, figsize=figsize, dpi=dpi)
+
+        def func(pct, allvals):
+            absolute = int(np.round(pct/100.*np.sum(allvals)))
+            return "{:.0f}%".format(pct, absolute)
+
+        expenditures = {}
+
+        include = ['Power Plant', 'Interconnection', 'Exploration', 
+                'Drilling', 'Injection Stimulation', 'Gathering System', 'Pumps', 'TES', 'Battery']
+        costs = {k:v for k,v in self.present_capex_per_unit.items()}
+        costs["Pumps"] = costs["Production Pumps"] + costs["Injection Pumps"]
+        costs_final = {k:costs[k] for k in include}
+        expenditures["CAPEX"] = costs_final
+
+        include = ['Power Plant', 'Wellsite', 'Makeup Water']
+        costs = {k:v for k,v in self.present_opex_per_unit.items()}
+        costs_final = {k:costs[k] for k in include}
+        expenditures["OPEX"] = costs_final
+
+        for i, (title, present_per_unit) in enumerate(expenditures.items()):
+            ex = [v for _,v in present_per_unit.items() if v > 0]
+            labels = [k for k,v in present_per_unit.items() if v > 0]
+            wedges, _, _ = axes[i].pie(x=ex,
+                                    pctdistance=0.8,
+                                    labels=labels, 
+                                    colors=colors, 
+                                    autopct=lambda pct: func(pct, ex),
+                                    textprops=dict(color="w", weight="bold", fontsize=fontsize))
+
+            axes[i].legend(wedges, labels,
+                        fontsize=10,
+                    title=title,
+                    loc="upper center",
+                    bbox_to_anchor=(0.5, 0.1, 0.0, 1.2),
+                        ncols=2)
+            
+        plt.tight_layout()
+
+        return fig
+
+    def plot_operations(self, span=None):
+        """Plot operational parameters.
+
+        Args:
+            span (Union[range, list], optional): range of timesteps to plot. Defaults to None.
+
+        Returns:
+            matplotlib.figure.Figure: figure
+        """
+
+        if not hasattr(self, "df_records"):
+            warnings.warn("Warning: economics are computed based on the latest simulation timestep.")
+            self.compute_economics()
+
+        qdict = {
+            "LMP [$/MWh]": "Electricity Price \n [$/MWh]",
+          "Atm Temp [deg C]": "Ambient Temp. \n [$\degree C$]",
+          "Res Temp [deg C]": "Reservoir Temp. \n [$\degree C$]",
+          'Inj Temp [deg C]': "Intector Temp. \n [$\degree C$]",
+          "Net Power Output [MWe]": "Net Generation \n [MWh]",
+          'M_Produced [kg/s]': "Field Production \n [kg/s]",
+          "Pumping Power [MWe]": "Pumping Power \n [MWe]",
+          "WH Temp [deg C]": "Producer\nTemp. [$\degree C$]",
+        }
+
+        quantities = list(qdict.keys())
+        ylabels = list(qdict.values())
+
+        span = span if span else range(0, self.max_simulation_steps-1)
+        fig, axes = plot_cols({" ": self.df_records}, span, quantities, 
+                                figsize=(10,12), ylabels=ylabels, legend_loc=False, dpi=100, 
+                            formattime=False, return_figax=True)
+        
+        return fig
+
     def set_defaults(self):
-        self.base_dir = "../../"
-        self.data_dir = "Data"
+        """Set default parameters that are not specified by the user.
+        """
+
+        self.base_dir = "."
+        self.data_dir = "data"
         self.market_dir = "market"
 
         self.battery_costs_filename = None
@@ -576,49 +701,20 @@ class World:
 
         self.pipinglength = 5
         self.bypass = False
-        self.m_prd = 60
+        self.m_prd = 80
 
+        self.rock_energy_recovery = 1.0
         self.dx = None
+        self.prd_well_diam = 0.31115 #meters, equivalent to 12.25 inch
+        self.inj_well_diam = 0.31115 #meters, equivalent to 12.25 inch
+        self.lateral_diam = 0.15875 #meters, equivalent to 6.25 inch
+        self.lateral_spacing = 100 #meters
+        self.closedloop_design = "default"
+        self.ramey = False
 
         self.FAST_MODE = {"on": False, "period": 31536000, 
         "accuracy": 1, "DynamicFluidProperties": True}
 
 
 if __name__ == '__main__':
-    from fgem.utils.config import get_config_from_json
-    from tqdm import tqdm
-    import cProfile
-    import pstats
-    from pstats import SortKey
-    
-    pr = cProfile.Profile()
-    pr.enable()
-
-    env_config = get_config_from_json("config.json")
-    env_config["economics"]["L"] = 1 #only test run for a single year
-    
-    project = World(env_config)
-    
-    def constant_strategy(project, mass_flow=80):
-        """Constant change producer mass flow rates"""
-        m_prd = np.array(project.num_prd*[mass_flow]).astype(float)
-        m_inj = np.array(project.num_inj*[m_prd.sum()/project.num_inj]).astype(float)
-        return m_prd, m_inj
-
-    for _ in tqdm(range(project.max_simulation_steps)):
-        m_prd, m_inj = constant_strategy(project)
-        project.step(m_prd=m_prd, m_inj=m_inj)
-        
-    project.compute_economics()
-    NPV, ROI, PBP, PPA_NPV, PPA_ROI, PPA_PBP, LCOE, NET_GEN, df_annual = compute_npv(project.df_records, project.capex_total, project.opex_total,
-                                                                        project.baseline_year, project.L, project.d, ppa_price=75)
-    # print economics
-    print(f"LCOE: {LCOE:.0f} $/MWh")
-    print(f"NPV: {NPV:.0f} $MM")
-    print(f"ROI: {ROI:.1f} %")
-    print(f"PBP: {PBP:.0f} yrs")
-    
-    pr.disable()
-    pr.dump_stats("stats.prof")
-    p = pstats.Stats('stats.prof')
-    p.strip_dirs().sort_stats(SortKey.CUMULATIVE).print_stats(50)
+    pass
