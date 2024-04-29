@@ -4,6 +4,7 @@ The FGEM workflow requires the user to input a configuration file to describe th
 
 ## `metadata`
 
+```{eval-rst}
 .. csv-table::
    :header-rows: 1
    :widths: 22,7,22,33
