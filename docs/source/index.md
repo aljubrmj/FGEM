@@ -34,7 +34,7 @@ about-installation
 :maxdepth: 1
 :hidden:
 
-usage
+usage-configuration.md
 ```
 
 ```{toctree}
