@@ -23,8 +23,11 @@ class World:
     """High-level class to define a project involving upstream, midstream, and downstream components."""
     
     def __init__(self, config):
+        """Defining attributes for the World class.
 
-        """Defining attributes for the World class."""
+        Args:
+            config (dict): json object with project configuration.
+        """
         
         # Set default values at first
         self.set_defaults()
