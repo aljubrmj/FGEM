@@ -11,7 +11,7 @@ The FGEM workflow requires the user to input a configuration file to describe th
    :file: _static/metadata.csv
 ```
 
-<!-- ## `subsurface`
+## `subsurface`
 
 ```{eval-rst}
 .. csv-table::
@@ -38,7 +38,7 @@ The FGEM workflow requires the user to input a configuration file to describe th
    :file: _static/market_weather.csv
 ```
 
-## `battery`
+<!-- ## `battery`
 
 ```{eval-rst}
 .. csv-table::
