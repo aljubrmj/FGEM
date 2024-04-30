@@ -3,7 +3,7 @@ drilling_cost,USD/meter,bool,"geothermal well drilling cost in USD/meter. If not
 reservoir_type,,str,"type of reservoir model. Options are (1) ""percentage_decline"" for PercentageDecline, (2) ""energy_decline"" for EnergyDecline, (3) ""diffusion_convection"" for DiffusionConvection, and (4) ""uloop"" for ULoop. For simulating conventional geothermal or enhanced geothermal systems, we recommend ""diffusion_convection"" as it is an anlytical solution. Models ""percentage_decline"" and ""energy_decline"" are conceptual. Meanwhile, ""uloop"" is used to simulate U-Loop closed loop systems.","""diffusion_convection"""
 Tres_init,¡ C,float,initial reservoir temperature,225
 Pres_init,bar,float,initial reservoir pressure,40
-V_res,:math:`m^3`,float,bulk reservoir volume,5
+V_res,meters^3,float,bulk reservoir volume,5
 phi_res,,float,reservoir porosity,0.1
 res_thickness,meters,float,reservoir thickness,300
 krock,W/m-K,float,reservoir themral conductivity,30
