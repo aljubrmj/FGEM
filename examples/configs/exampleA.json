@@ -1,5 +1,5 @@
 {
-    "economics": {
+    "metadata": {
         "time_init": "2025-01-01",
         "L": 25,
         "d": 0.07,

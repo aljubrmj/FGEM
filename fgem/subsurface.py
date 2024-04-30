@@ -695,8 +695,6 @@ class EnergyDeclineReservoir(BaseReservoir):
 		self.Pres_init = self.Phydrostatic if compute_hydrostatic_pressure else Pres_init*1e2
 		self.V_res = V_res * 1e9 # m3
 		self.phi_res = phi_res
-		self.beta = beta
-		self.nu = nu
 		self.rock_energy_recovery = rock_energy_recovery
 		self.h_res_init = steamtable.h_pt(self.Pres_init/1e2, self.Tres_init)
 		self.h_prd = np.array([steamtable.h_pt(self.Pres_init/1e2, T) for T in self.T_prd_bh])
@@ -745,7 +743,7 @@ class EnergyDeclineReservoir(BaseReservoir):
 		self.h_inj = np.array([steamtable.hL_t(T) for T in self.T_inj_bh]) #self.fxsteam.func_hl(self.T_inj_bh, *self.fxsteam.popt_hl) #np.array([steamtable.hL_t(T) for T in self.T_inj_bh])
 		self.k =  self.energy_res_curr/self.energy_res_init if self.energy_res_curr>=0 else self.kold * self.kratio
 		self.D = (np.log(self.energy_res_curr + self.net_energy_produced) - np.log(self.energy_res_curr))/self.timestep.total_seconds()
-		self.decline_coeff = self.decline_func(self.k, self.D, (self.time_curr - self.time_init).total_seconds(), self.nu, self.beta)
+		self.decline_coeff = self.decline_func(self.k, self.D, (self.time_curr - self.time_init).total_seconds())
 		self.Tres = min(max(np.mean(self.T_inj_bh)*1.5, self.Tres_init * self.decline_coeff), self.Tres)
 		self.T_prd_bh = np.array(self.num_prd*[self.Tres], dtype='float')
 		self.kratio = self.k / self.kold

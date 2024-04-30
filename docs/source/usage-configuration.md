@@ -29,7 +29,7 @@ The FGEM workflow requires the user to input a configuration file to describe th
    :file: _static/powerplant.csv
 ```
 
-## `market/weather`
+## `market_weather`
 
 ```{eval-rst}
 .. csv-table::
