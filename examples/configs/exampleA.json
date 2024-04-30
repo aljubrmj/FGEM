@@ -15,7 +15,7 @@
     },
     "downstream": {
         "powerplant": {
-            "powerplant_type": "Binary",
+            "powerplant_type": "Flash",
             "powerplant_capacity": 10,
             "cf": 1.0
     }

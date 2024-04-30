@@ -3,7 +3,7 @@ drilling_cost,USD/meter,bool,"geothermal well drilling cost in USD/meter. If not
 reservoir_type,,str,"type of reservoir model. Options are (1) ""percentage_decline"" for PercentageDecline, (2) ""energy_decline"" for EnergyDecline, (3) ""diffusion_convection"" for DiffusionConvection, and (4) ""uloop"" for ULoop. For simulating conventional geothermal or enhanced geothermal systems, we recommend ""diffusion_convection"" as it is an anlytical solution. Models ""percentage_decline"" and ""energy_decline"" are conceptual. Meanwhile, ""uloop"" is used to simulate U-Loop closed loop systems.","""diffusion_convection"""
 Tres_init,¡ C,float,initial reservoir temperature,225
 Pres_init,bar,float,initial reservoir pressure,40
-V_res,meters^3,float,bulk reservoir volume,5
+V_res,:math:`m^3`,float,bulk reservoir volume,5
 phi_res,,float,reservoir porosity,0.1
 res_thickness,meters,float,reservoir thickness,300
 krock,W/m-K,float,reservoir themral conductivity,30
@@ -27,5 +27,5 @@ lateral_diam,meters,float,property of the Uloop  reservoir model indicating when
 lateral_spacing,meters,float,property of the Uloop  reservoir model indicating the spacing between each two laterals,100
 closedloop_design,,str,"property of the Uloop  reservoir model indicating the closedloop design to be used. If set to ""default"", it constructs typical multilateral Uloop systems. If set to ""eavor"", it constructs a design similar to what is proposed by Eavor Deep 2.0.",
 dx,meters,int,property of the Uloop  reservoir model indicating the size of each mesh cell for the numerical solution.,
-ramey,,bool,whether or not to use Ramey's heat loss/gain across the wellbore.,FALSE
+ramey,,bool,whether or not to use Ramey's heat loss/gain across the wellbore.,false
 reservoir_simulator_settings,,dict,advanced settings used to expedite the reservoir simulation runs by enhancing or decreasing the timeframe at which the reservoir module is updated.,
