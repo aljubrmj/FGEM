@@ -2,6 +2,3 @@
 tank_cost,:math:`USD/m^3`,float,capital cost for thermal energy storage tank,0.00143453
 tank_diameter,m,float,diameter of the thermal energy storage tank,0
 tank_height,m,float,height of the thermal energy storage tank,0
-,,,,
-,,,,
-,,,,

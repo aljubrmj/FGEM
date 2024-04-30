@@ -1871,5 +1871,174 @@ class ULoopSBT(BaseReservoir):
 		self.f = [[0,1,2,3], [4,5,6,7], [0, 1, 6, 5], [1, 2, 7, 6], [2, 3, 4, 7], [0, 3, 4, 5]]
 		self.verts =  [[self.v[i] for i in p] for p in self.f]
 
+
+class TabularReservoir(BaseReservoir):
+	"""Conceptual reservoir model where temperature declines based on an fixed annual decline rate."""
+
+	def __init__(self,
+				 Tres_init,
+				 geothermal_gradient,
+				 surface_temp,
+				 L,
+				 time_init,
+				 well_depth,
+				 prd_well_diam,
+				 inj_well_diam,
+				 num_prd,
+				 num_inj,
+				 waterloss,
+				 powerplant_type,
+				 pumpeff,
+				 ramey=True,
+				 pumping=True,
+     			 krock=3,
+        		 rhorock=2700,
+           		 cprock=1000,
+              	 impedance = 0.1,
+                 res_thickness=200,
+                 PI = 20,
+                 II = 20, 
+                 SSR = 1.0,
+                 N_ramey_mv_avg=168,
+                 drawdp=0.005,
+                 plateau_length=3,
+                 reservoir_simulator_settings={"fast_mode": False, "period": 3600*8760/12},
+				 PumpingModel="OpenLoop",
+				 filepath=None
+                 ):
+
+		"""Initialize reservoir model.
+
+		Args:
+			Tres_init (float): initial reservoir temperature in deg C.
+			geothermal_gradient (float): average geothermal gradient in deg C/km.
+			surface_temp (float): surface temperature in deg C.
+			L (float): project lifetime in years.
+			time_init (datetime): initial time.
+			well_depth (float): well depth in meters.
+			prd_well_diam (float): production well diameter in meters.
+			inj_well_diam (float): injection well diameter in meters.
+			num_prd (int): number of producers.
+			num_inj (int): number of injectors.
+			waterloss (float): fraction of injected water that is lost to the reservoir (fraction).
+			powerplant_type (str): type of power plant (either "Binary" or "Flash").
+			pumpeff (float): pump efficiency (fraction).
+			ramey (bool, optional): whether or not to use ramey's model for wellbore heat loss/gain. Defaults to True.
+			pumping (bool, optional): whther or not to account for parasitic losses due to pumping requirements. Defaults to True.
+			krock (float, optional): rock thermal conductivity in W/C-m. Defaults to 3.
+			rhorock (float, optional): rock bulk density in kg/m3. Defaults to 2700.
+			cprock (float, optional): rock heat capacity in J/kg-K. Defaults to 1000.
+			impedance (float, optional): reservoir pressure losses when using an impendance model. Defaults to 0.1.
+			res_thickness (float, optional): reservoir thickness in meters. Defaults to 200.
+			PI (float, optional): productivity index in kg/s/bar. Defaults to 20.
+			II (float, optional): injectivity index in kg/s/bar. Defaults to 20.
+			SSR (float, optional): Stimulation success rate, which is a multiplier used to reduce PI and II when stimulation is not fully successful. Defaults to 1.0.
+			N_ramey_mv_avg (int, optional): number of timesteps used for averaging the f-function when computing ramey's heat losses with variable mass flow rates. Defaults to 168.
+			drawdp (float, optional): annual decline rate of reservoir temperature (fraction). Defaults to 0.005.
+			plateau_length (int, optional): number of years before reservoir temperature starts to decline. Defaults to 3.
+			reservoir_simulator_settings (dict, optional): information used to reduce the required timestepping when simulating the reservoir. It comes with keys of "fast_mode" to turn it on and "period" to specify the time period needed to pass before the reservoir state is updated, which is aimed at reducing computational requirements in exchange for loss in accuracy. Defaults to {"fast_mode": False, "period": 3600*8760/12}.
+			PumpingModel (str, optional): model type used to compute pressure losses (either "OpenLoop" or "ClosedLoop"). Defaults to "OpenLoop".
+		"""
+
+		self.filepath = filepath
+		assert filepath, "UserError: filepath is not specified for the selected tabular reservoir."
+
+		self.df = pd.read_csv(self.filepath)
+		assert "Tres_deg_C" in self.df.columns, f"UserError: you must have column with name 'Tres_deg_C' (reservoir temperature) in the provided tabular reservoir data at {self.filepath}"
+		assert "m_kg_per_sec" in self.df.columns, f"UserError: you must have column with name 'm_kg_per_sec' (total field geofluid production) in the provided tabular reservoir data at {self.filepath}"
+
+		self.df["Date"] = pd.to_datetime(self.df["Date"])
+		Tres_init = self.df.loc[0, "Tres_deg_C"]
+		geothermal_gradient = (Tres_init - surface_temp)/well_depth*1000
+
+		super(TabularReservoir, self).__init__(Tres_init,
+											geothermal_gradient,
+											surface_temp,
+											L,
+											time_init,
+											well_depth,
+											prd_well_diam,
+											inj_well_diam,
+											num_prd,
+											num_inj,
+											waterloss,
+											powerplant_type,
+											pumpeff,
+											ramey,
+											pumping,
+											krock,
+											rhorock,
+											cprock,
+											impedance,
+											res_thickness,
+											PI,
+											II,
+											SSR,
+											N_ramey_mv_avg,
+           									reservoir_simulator_settings)
+
+		self.numberoflaterals = 1
+		self.well_tvd = well_depth
+		self.well_md = self.well_tvd
+		self.res_length = 2000
+		self.res_thickness = res_thickness
+		self.res_width = 1000
+
+		self.configure_well_dimensions()
+		
+	def pre_model(self, t, m_prd, m_inj, T_inj):
+		"""Computations to be performed before stepping the reservoir model.
+
+		Args:
+			t (datetime): current timestamp.
+            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s.
+            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
+			T_inj (float): injection temperature in deg C.
+		"""
+		pass
+
+	def model(self, t, m_prd, m_inj, T_inj):
+
+		"""Computations to be performed when stepping the reservoir model.
+
+		Args:
+			t (datetime): current timestamp.
+            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s.
+            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
+			T_inj (float): injection temperature in deg C.
+		"""
+		self.Tres = self.df.loc[(self.df["Date"] - t).abs().argmin(), "Tres_deg_C"]
+		self.T_prd_bh = np.array(self.num_prd*[self.Tres], dtype='float')
+		self.T_inj_wh = np.array(self.num_inj*[T_inj], dtype='float')
+
+	def configure_well_dimensions(self):
+		"""Configuration specifications of a doublet. It requires the specification of a doublet, including the producer dimensions (self.xprod, self.yprod, self.zprod), injector dimensions (self.xinj, self.yinj, self.zinj) and reservoir vertices (self.verts). See Class PercentageReservoir for example implementation.
+		"""
+
+		self.zprod = np.array([0, -self.well_tvd])
+		self.xprod = -self.res_length/2 * np.ones_like(self.zprod)
+		self.yprod = np.zeros_like(self.zprod)
+
+		self.zinj = np.array([0, -self.well_tvd])
+		self.xinj = self.res_length/2 * np.ones_like(self.zinj)
+		self.yinj = np.zeros_like(self.zinj)
+
+		self.v = [
+			[-self.res_length/2, -self.res_width/2, -self.well_tvd + self.res_thickness],
+			[-self.res_length/2, self.res_width/2, -self.well_tvd + self.res_thickness],
+			[self.res_length/2, self.res_width/2, -self.well_tvd + self.res_thickness],
+			[self.res_length/2, -self.res_width/2, -self.well_tvd + self.res_thickness],
+			[self.res_length/2, -self.res_width/2, -self.well_tvd],
+			[-self.res_length/2, -self.res_width/2, -self.well_tvd],
+			[-self.res_length/2, self.res_width/2, -self.well_tvd],
+			[self.res_length/2, self.res_width/2, -self.well_tvd],
+		]
+
+		self.v = np.array(self.v)
+		self.f = [[0,1,2,3], [4,5,6,7], [0, 1, 6, 5], [1, 2, 7, 6], [2, 3, 4, 7], [0, 3, 4, 5]]
+		self.verts =  [[self.v[i] for i in p] for p in self.f]
+
+
 if __name__ == '__main__':
 	pass
+

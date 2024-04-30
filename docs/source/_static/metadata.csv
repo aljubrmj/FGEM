@@ -4,3 +4,4 @@ L,years,int,project lifetime,30
 d,,float,nominal discount rate,0.07
 inflation,,float,inflation rate,0.02
 itc,,float,"investment tax credit, which is assumed to be recovered from the total project capital expenditure.",0.3
+project_data_dir,,str,"If data were to be used, this variable indicates the directory where it can be found",``./data/sample_project``

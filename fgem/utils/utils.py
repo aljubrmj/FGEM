@@ -2,7 +2,6 @@ import os
 import sys
 import math
 import numpy as np
-import numpy_financial as npf
 import pandas as pd
 from datetime import timedelta, datetime
 import matplotlib.pyplot as plt
@@ -580,55 +579,6 @@ def vaporpressurewater(Twater):
     return np.where(Twater < 100, 133.322*(10**(8.07131-1730.63/(233.426+Twater)))/1000, 
          133.322*(10**(8.14019-1810.94/(244.485 +Twater)))/1000)
     
-def compute_npv(df_records, capex_total, opex_total, baseline_year, L, d, ppa_price=75, ppa_escalaction_rate=0.02):
-    
-    """Compute NPV and other economic metrics for a completed simulation run."""
-    
-    years = np.arange(L)
-    df_annual_nominal = df_records.groupby('Year').sum(numeric_only=True)
-
-    # This ensures that we captured all columns
-    df_annual_nominal = pd.merge(df_annual_nominal,
-            pd.DataFrame(min(df_annual_nominal.index) + np.arange(L), columns=["Year"]).set_index("Year"),
-            left_index=True, right_index=True,
-            how="outer").fillna(0)
-
-    df_annual_nominal["PPA Revenue [$MM]"] = df_annual_nominal["Net Power Generation [MWhe]"]\
-        *ppa_price/1e6 * (1 + ppa_escalaction_rate)**years
-    df_annual_nominal["CAPEX [$MM]"] = capex_total
-    df_annual_nominal["OPEX [$MM]"] = opex_total
-
-    df_annual_nominal["Cashin [$MM]"] = df_annual_nominal["Revenue [$MM]"]
-    df_annual_nominal["PPA Cashin [$MM]"] = df_annual_nominal["PPA Revenue [$MM]"]
-    df_annual_nominal["Cashout [$MM]"] = df_annual_nominal["OPEX [$MM]"] + df_annual_nominal["CAPEX [$MM]"]
-    df_annual_nominal["Cashflow [$MM]"] = df_annual_nominal["Cashin [$MM]"] - df_annual_nominal["Cashout [$MM]"]
-    df_annual_nominal["PPA Cashflow [$MM]"] = df_annual_nominal["PPA Cashin [$MM]"] - df_annual_nominal["Cashout [$MM]"]
-
-    df_annual = df_annual_nominal.div((1 + d)**years, axis=0)
-    df_annual["NPV [$MM]"] = df_annual["Cashflow [$MM]"].cumsum()
-    df_annual["PPA NPV [$MM]"] = df_annual["PPA Cashflow [$MM]"].cumsum()
-    df_annual["Revenue [$MM]"] = df_annual["Cashin [$MM]"].cumsum()
-    df_annual["Cost [$MM]"] = df_annual["Cashout [$MM]"].cumsum()
-    df_annual["Cum CAPEX [$MM]"] = df_annual["CAPEX [$MM]"].cumsum()
-    df_annual["Cum OPEX [$MM]"] = df_annual["OPEX [$MM]"].cumsum()
-    df_annual["ROI [%]"] = df_annual["Cashflow [$MM]"].cumsum()/df_annual["CAPEX [$MM]"].cumsum() * 100
-    df_annual["PPA ROI [%]"] = df_annual["PPA Cashflow [$MM]"].cumsum()/df_annual["CAPEX [$MM]"].cumsum() * 100
-    df_annual['Res Temp [deg C]'] = df_records.groupby('Year').mean(numeric_only=True)["Res Temp [deg C]"]
-    df_annual['WH Temp [deg C]'] = df_records.groupby('Year').mean(numeric_only=True)["WH Temp [deg C]"]
-    NPV = df_annual["NPV [$MM]"].iloc[-1]
-    ROI = df_annual["ROI [%]"].iloc[-1]
-    PBP = df_annual_nominal.index[np.argmax((df_annual_nominal["Cashflow [$MM]"].cumsum()>0).values)] - baseline_year
-    IRR = npf.irr(df_annual_nominal["Cashflow [$MM]"].values) * 100
-    PPA_NPV = df_annual["PPA NPV [$MM]"].iloc[-1]
-    PPA_ROI = df_annual["PPA ROI [%]"].iloc[-1]
-    PPA_PBP = df_annual_nominal.index[np.argmax((df_annual_nominal["PPA Cashflow [$MM]"].cumsum()>0).values)] - baseline_year
-    PPA_IRR = npf.irr(df_annual_nominal["PPA Cashflow [$MM]"].values) * 100
-    NET_GEN = df_annual["Net Power Generation [MWhe]"].sum()
-    LCOE = df_annual["Cashout [$MM]"].sum()*1e6/nonzero(NET_GEN, 1E-1)
-    if LCOE < 0: # cases where pumping requirements are greater than gross power generation
-        LCOE = 999
-    return NPV, ROI, PBP, IRR, PPA_NPV, PPA_ROI, PPA_PBP, PPA_IRR, LCOE, NET_GEN, df_annual
-
 def compute_drilling_cost(well_tvd, well_diam, lateral_length=0, numberoflaterals=1,
                           total_drilling_length=None, drilling_cost=None):
     

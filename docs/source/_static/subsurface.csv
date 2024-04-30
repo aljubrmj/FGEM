@@ -29,3 +29,4 @@ closedloop_design,,str,"property of the Uloop  reservoir model indicating the cl
 dx,meters,int,property of the Uloop  reservoir model indicating the size of each mesh cell for the numerical solution.,
 ramey,,bool,whether or not to use Ramey's heat loss/gain across the wellbore.,FALSE
 reservoir_simulator_settings,,dict,advanced settings used to expedite the reservoir simulation runs by enhancing or decreasing the timeframe at which the reservoir module is updated.,
+reservoir_filename,,str,"CSV file with tabular reservoir data including three columns [""Date"", ""Tres_deg_C"", ""m_kg_per_sec""] to indicate timestamp, reservoir temperature, and total field flow rate. (one value per year throughout the project lifetime). For instance, refer to ``examples/data/market/reservoir.csv``",

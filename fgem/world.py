@@ -7,8 +7,9 @@ from collections import defaultdict
 import os
 import sys
 import warnings
+import numpy_financial as npf
 from datetime import timedelta, datetime
-from fgem.utils.utils import compute_drilling_cost, compute_npv, plot_cols
+from fgem.utils.utils import compute_drilling_cost, plot_cols
 from fgem.utils.constants import SMALL_NUM, SMALLER_NUM
 from fgem.subsurface import *
 from fgem.powerplant import *
@@ -16,6 +17,7 @@ from fgem.markets import *
 from fgem.weather import *
 from fgem.storage import *
 from pyXSteam.XSteam import XSteam
+
 colors = 24*sns.color_palette()
 
 class World:
@@ -37,11 +39,11 @@ class World:
         self.config = config
         self.config_to_placeholders(self.config)
 
-        self.data_dir = os.path.join(self.base_dir, self.data_dir)
-        self.energy_filepath = os.path.join(self.data_dir, self.market_dir, self.energy_market_filename) if self.energy_market_filename else None
-        self.capacity_filepath = os.path.join(self.data_dir, self.market_dir, self.capacity_market_filename) if self.capacity_market_filename else None
-        self.weather_filepath = os.path.join(self.data_dir, self.market_dir, self.weather_filename) if self.weather_filename else None
-        self.battery_costs_filepath = os.path.join(self.data_dir, self.market_dir, self.battery_costs_filename) if isinstance(self.battery_costs_filename, str) else None
+        self.reservoir_filepath = os.path.join(self.project_data_dir, self.reservoir_filename) if self.reservoir_filename else None
+        self.energy_filepath = os.path.join(self.project_data_dir, self.energy_market_filename) if self.energy_market_filename else None
+        self.capacity_filepath = os.path.join(self.project_data_dir, self.capacity_market_filename) if self.capacity_market_filename else None
+        self.weather_filepath = os.path.join(self.project_data_dir, self.weather_filename) if self.weather_filename else None
+        self.battery_costs_filepath = os.path.join(self.project_data_dir, self.battery_costs_filename) if isinstance(self.battery_costs_filename, str) else None
         self.time_init = pd.to_datetime(self.time_init) if self.time_init else pd.to_datetime('today')
         self.start_year = self.time_init.year
         self.end_year = self.start_year + self.L
@@ -74,7 +76,7 @@ class World:
         self._reset()
 
     def step_update_record(self,
-                            m_prd=80,
+                            m_prd=100,
                             m_inj=None,
                             m_tes_in=0,
                             m_tes_out=0,
@@ -96,7 +98,9 @@ class World:
             m_bypass (Union[ndarray,float], optional): mass flow rates to be bypassed away from the power plant or turbine in kg/s. Defaults to 0.
             keep_records (bool, optional): whether or not to store records at each simulation timestep. Defaults to True.
         """
-                
+        if self.reservoir_filename:
+            m_prd = self.reservoir.df.loc[(self.reservoir.df["Date"] - self.time_curr).abs().argmin() , "m_kg_per_sec"]/self.num_prd
+            
         self.update_state(m_prd, m_inj, 
                           m_tes_in, m_tes_out, 
                           p_bat_ppin, p_bat_gridin, p_bat_out, 
@@ -290,8 +294,10 @@ class World:
             self.records["SOC [%]"].append(self.battery.SOC)
             self.records["Bat Energy Content [MWh]"].append(self.battery.energy_content)
 
-    def compute_economics(self):
+    def compute_economics(self, print_outputs=True):
         """Compute the project capex/opex economics.
+            Args:
+            print_outputs (bool, optional): whether or not to print final economic parameters.
         """
         
         self.df_records = pd.DataFrame.from_dict(self.records).set_index("World Time")
@@ -431,7 +437,9 @@ class World:
         self.opex_total = np.sum(np.array([v for v in self.opex.values()]), axis=0) # $MM/year
 
         self.cashout = self.capex_total + self.opex_total ##
-    
+        
+        self.compute_npv(print_outputs=print_outputs)
+
     def update_timestep_for_all_components(self, timestep):
         """Update the simulation timestep size across all project components.
 
@@ -503,40 +511,52 @@ class World:
         # Create reservoir
         self.total_drilling_length, self.prd_total_drilling_length, self.inj_total_drilling_length = None, None, None
 
-        if self.reservoir_type == "energy_decline":
-            self.reservoir = EnergyDeclineReservoir(Tres_init=self.Tres_init, Pres_init=self.Pres_init, geothermal_gradient=self.geothermal_gradient, surface_temp=self.surface_temp, 
-                                        L=self.L, time_init=self.time_init, well_depth=self.well_depth, 
-                                        prd_well_diam=self.prd_well_diam, inj_well_diam=self.inj_well_diam, num_prd=self.num_prd, 
-                                        num_inj=self.num_inj, waterloss=self.waterloss,
-                                        powerplant_type=self.powerplant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II, SSR=self.SSR, V_res=self.V_res, phi_res=self.phi_res,
-                                        rock_energy_recovery=self.rock_energy_recovery, reservoir_simulator_settings=self.reservoir_simulator_settings, ramey=self.ramey, PumpingModel=self.PumpingModel)
-        elif self.reservoir_type == "diffusion_convection":                
-            self.reservoir = DiffusionConvection(Tres_init=self.Tres_init, geothermal_gradient=self.geothermal_gradient, surface_temp=self.surface_temp,
-                                        L=self.L, time_init=self.time_init, well_depth=self.well_depth, 
-                                        prd_well_diam=self.prd_well_diam, inj_well_diam=self.inj_well_diam, num_prd=self.num_prd, 
-                                        num_inj=self.num_inj, waterloss=self.waterloss, 
-                                        powerplant_type=self.powerplant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II, SSR=self.SSR, 
-                                        V_res=self.V_res, phi_res=self.phi_res, lateral_length=self.lateral_length, res_thickness=self.res_thickness, 
-                                        krock=self.krock, reservoir_simulator_settings=self.reservoir_simulator_settings, PumpingModel=self.PumpingModel, ramey=self.ramey)
-        elif self.reservoir_type == "uloop":
-            self.reservoir = ULoopSBT(Tres_init=self.Tres_init, Pres_init=self.Pres_init, surface_temp=self.surface_temp, geothermal_gradient=self.geothermal_gradient,
-                         prd_well_diam=self.prd_well_diam, inj_well_diam=self.inj_well_diam, lateral_diam=self.lateral_diam, 
-                         well_depth = self.well_depth, numberoflaterals=self.numberoflaterals, half_lateral_length = self.half_lateral_length,
-                         lateral_spacing=self.lateral_spacing, L=self.L, time_init=self.time_init, num_prd=self.num_prd, num_inj=self.num_inj, 
-                         waterloss=self.waterloss, powerplant_type=self.powerplant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II,
-                         times_arr=np.linspace(0, self.max_simulation_steps, self.max_simulation_steps), reservoir_simulator_settings=self.reservoir_simulator_settings, PumpingModel=self.PumpingModel,
-                         closedloop_design=self.closedloop_design, ramey=self.ramey, dx=self.dx
-                        )
-            self.total_drilling_length, self.prd_total_drilling_length, self.inj_total_drilling_length = self.reservoir.total_drilling_length, self.reservoir.total_drilling_length/2, self.reservoir.total_drilling_length/2
-        else:
-            # Default to percentage drawdown model
-            self.reservoir = PercentageReservoir(Tres_init=self.Tres_init, geothermal_gradient=self.geothermal_gradient, surface_temp=self.surface_temp, 
+        # if reservoir filepath is provided, then override reservoir object to use the provided tabular data
+        if self.reservoir_filepath:
+            self.reservoir = TabularReservoir(Tres_init=self.Tres_init, geothermal_gradient=self.geothermal_gradient, surface_temp=self.surface_temp, 
                             L=self.L, time_init=self.time_init, well_depth=self.well_depth, 
                             prd_well_diam=self.prd_well_diam, inj_well_diam=self.inj_well_diam, num_prd=self.num_prd, 
                             num_inj=self.num_inj, waterloss=self.waterloss,
                             powerplant_type=self.powerplant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II, SSR=self.SSR, 
-                            drawdp=self.drawdp, plateau_length=self.plateau_length, reservoir_simulator_settings=self.reservoir_simulator_settings, ramey=self.ramey, PumpingModel=self.PumpingModel)
-        
+                            drawdp=self.drawdp, plateau_length=self.plateau_length, reservoir_simulator_settings=self.reservoir_simulator_settings, ramey=self.ramey, PumpingModel=self.PumpingModel,
+                            filepath=self.reservoir_filepath)
+            self.Tres_init = self.reservoir.Tres_init
+
+        else:
+            if self.reservoir_type == "energy_decline":
+                self.reservoir = EnergyDeclineReservoir(Tres_init=self.Tres_init, Pres_init=self.Pres_init, geothermal_gradient=self.geothermal_gradient, surface_temp=self.surface_temp, 
+                                            L=self.L, time_init=self.time_init, well_depth=self.well_depth, 
+                                            prd_well_diam=self.prd_well_diam, inj_well_diam=self.inj_well_diam, num_prd=self.num_prd, 
+                                            num_inj=self.num_inj, waterloss=self.waterloss,
+                                            powerplant_type=self.powerplant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II, SSR=self.SSR, V_res=self.V_res, phi_res=self.phi_res,
+                                            rock_energy_recovery=self.rock_energy_recovery, reservoir_simulator_settings=self.reservoir_simulator_settings, ramey=self.ramey, PumpingModel=self.PumpingModel)
+            elif self.reservoir_type == "diffusion_convection":                
+                self.reservoir = DiffusionConvection(Tres_init=self.Tres_init, geothermal_gradient=self.geothermal_gradient, surface_temp=self.surface_temp,
+                                            L=self.L, time_init=self.time_init, well_depth=self.well_depth, 
+                                            prd_well_diam=self.prd_well_diam, inj_well_diam=self.inj_well_diam, num_prd=self.num_prd, 
+                                            num_inj=self.num_inj, waterloss=self.waterloss, 
+                                            powerplant_type=self.powerplant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II, SSR=self.SSR, 
+                                            V_res=self.V_res, phi_res=self.phi_res, lateral_length=self.lateral_length, res_thickness=self.res_thickness, 
+                                            krock=self.krock, reservoir_simulator_settings=self.reservoir_simulator_settings, PumpingModel=self.PumpingModel, ramey=self.ramey)
+            elif self.reservoir_type == "uloop":
+                self.reservoir = ULoopSBT(Tres_init=self.Tres_init, Pres_init=self.Pres_init, surface_temp=self.surface_temp, geothermal_gradient=self.geothermal_gradient,
+                            prd_well_diam=self.prd_well_diam, inj_well_diam=self.inj_well_diam, lateral_diam=self.lateral_diam, 
+                            well_depth = self.well_depth, numberoflaterals=self.numberoflaterals, half_lateral_length = self.half_lateral_length,
+                            lateral_spacing=self.lateral_spacing, L=self.L, time_init=self.time_init, num_prd=self.num_prd, num_inj=self.num_inj, 
+                            waterloss=self.waterloss, powerplant_type=self.powerplant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II,
+                            times_arr=np.linspace(0, self.max_simulation_steps, self.max_simulation_steps), reservoir_simulator_settings=self.reservoir_simulator_settings, PumpingModel=self.PumpingModel,
+                            closedloop_design=self.closedloop_design, ramey=self.ramey, dx=self.dx
+                            )
+                self.total_drilling_length, self.prd_total_drilling_length, self.inj_total_drilling_length = self.reservoir.total_drilling_length, self.reservoir.total_drilling_length/2, self.reservoir.total_drilling_length/2
+            else:
+                # Default to percentage drawdown model
+                self.reservoir = PercentageReservoir(Tres_init=self.Tres_init, geothermal_gradient=self.geothermal_gradient, surface_temp=self.surface_temp, 
+                                L=self.L, time_init=self.time_init, well_depth=self.well_depth, 
+                                prd_well_diam=self.prd_well_diam, inj_well_diam=self.inj_well_diam, num_prd=self.num_prd, 
+                                num_inj=self.num_inj, waterloss=self.waterloss,
+                                powerplant_type=self.powerplant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II, SSR=self.SSR, 
+                                drawdp=self.drawdp, plateau_length=self.plateau_length, reservoir_simulator_settings=self.reservoir_simulator_settings, ramey=self.ramey, PumpingModel=self.PumpingModel)
+
         # Create power plant
         if "binary" in self.powerplant_type.lower():
             self.powerplant = ORCPowerPlant(ppc=self.powerplant_capacity, Tres=self.reservoir.Tres_init, cf=self.cf)
@@ -672,13 +692,69 @@ class World:
         
         return fig
 
+    def compute_npv(self, ppa_price=75, ppa_escalaction_rate=0.02, print_outputs=True):
+        """Compute NPV and other economic metrics for a completed simulation run.
+
+        Args:
+            ppa_price (float, optional): price of power purchase agreement in USD/MWh. Defaults to 75.
+            ppa_escalaction_rate (float, optional): price escalation of power purchase agreement (fraction). Defaults to 0.02.
+        """
+        
+        years = np.arange(self.L)
+        self.df_annual_nominal = self.df_records.groupby('Year').sum(numeric_only=True)
+
+        # This ensures that we captured all columns
+        self.df_annual_nominal = pd.merge(self.df_annual_nominal,
+                pd.DataFrame(min(self.df_annual_nominal.index) + np.arange(self.L), columns=["Year"]).set_index("Year"),
+                left_index=True, right_index=True,
+                how="outer").fillna(0)
+
+        self.df_annual_nominal["PPA Revenue [$MM]"] = self.df_annual_nominal["Net Power Generation [MWhe]"]\
+            *ppa_price/1e6 * (1 + ppa_escalaction_rate)**years
+        self.df_annual_nominal["CAPEX [$MM]"] = self.capex_total
+        self.df_annual_nominal["OPEX [$MM]"] = self.opex_total
+
+        self.df_annual_nominal["Cashin [$MM]"] = self.df_annual_nominal["Revenue [$MM]"]
+        self.df_annual_nominal["PPA Cashin [$MM]"] = self.df_annual_nominal["PPA Revenue [$MM]"]
+        self.df_annual_nominal["Cashout [$MM]"] = self.df_annual_nominal["OPEX [$MM]"] + self.df_annual_nominal["CAPEX [$MM]"]
+        self.df_annual_nominal["Cashflow [$MM]"] = self.df_annual_nominal["Cashin [$MM]"] - self.df_annual_nominal["Cashout [$MM]"]
+        self.df_annual_nominal["PPA Cashflow [$MM]"] = self.df_annual_nominal["PPA Cashin [$MM]"] - self.df_annual_nominal["Cashout [$MM]"]
+
+        self.df_annual = self.df_annual_nominal.div((1 + self.d)**years, axis=0)
+        self.df_annual["NPV [$MM]"] = self.df_annual["Cashflow [$MM]"].cumsum()
+        self.df_annual["PPA NPV [$MM]"] = self.df_annual["PPA Cashflow [$MM]"].cumsum()
+        self.df_annual["Revenue [$MM]"] = self.df_annual["Cashin [$MM]"].cumsum()
+        self.df_annual["Cost [$MM]"] = self.df_annual["Cashout [$MM]"].cumsum()
+        self.df_annual["Cum CAPEX [$MM]"] = self.df_annual["CAPEX [$MM]"].cumsum()
+        self.df_annual["Cum OPEX [$MM]"] = self.df_annual["OPEX [$MM]"].cumsum()
+        self.df_annual["ROI [%]"] = self.df_annual["Cashflow [$MM]"].cumsum()/self.df_annual["CAPEX [$MM]"].cumsum() * 100
+        self.df_annual["PPA ROI [%]"] = self.df_annual["PPA Cashflow [$MM]"].cumsum()/self.df_annual["CAPEX [$MM]"].cumsum() * 100
+        self.df_annual['Res Temp [deg C]'] = self.df_records.groupby('Year').mean(numeric_only=True)["Res Temp [deg C]"]
+        self.df_annual['WH Temp [deg C]'] = self.df_records.groupby('Year').mean(numeric_only=True)["WH Temp [deg C]"]
+        self.NPV = self.df_annual["NPV [$MM]"].iloc[-1]
+        self.ROI = self.df_annual["ROI [%]"].iloc[-1]
+        self.PBP = self.df_annual_nominal.index[np.argmax((self.df_annual_nominal["Cashflow [$MM]"].cumsum()>0).values)] - self.start_year
+        self.IRR = npf.irr(self.df_annual_nominal["Cashflow [$MM]"].values) * 100
+        self.PPA_NPV = self.df_annual["PPA NPV [$MM]"].iloc[-1]
+        self.PPA_ROI = self.df_annual["PPA ROI [%]"].iloc[-1]
+        self.PPA_PBP = self.df_annual_nominal.index[np.argmax((self.df_annual_nominal["PPA Cashflow [$MM]"].cumsum()>0).values)] - self.start_year
+        self.PPA_IRR = npf.irr(self.df_annual_nominal["PPA Cashflow [$MM]"].values) * 100
+        self.NET_GEN = self.df_annual["Net Power Generation [MWhe]"].sum()
+        self.LCOE = self.df_annual["Cashout [$MM]"].sum()*1e6/nonzero(self.NET_GEN, 1E-1)
+        if self.LCOE < 0: # cases where pumping requirements are greater than gross power generation
+            self.LCOE = 999
+
+        # print economics
+        if print_outputs:
+            print(f"LCOE: {self.LCOE:.0f} $/MWh")
+            print(f"NPV: {self.NPV:.0f} $MM")
+            print(f"PBP: {self.PBP:.0f} yrs")
+
     def set_defaults(self):
         """Set default parameters that are not specified by the user.
         """
 
-        self.base_dir = "."
-        self.data_dir = "data"
-        self.market_dir = "market"
+        self.project_data_dir = "./data/market"
         self.time_init = "2025-01-01"
         self.L = 30
         self.d = 0.07
@@ -718,6 +794,7 @@ class World:
         self.fat_factor = 1
         self.resample = "1Y"
 
+        self.reservoir_filename = None
         self.reservoir_type = "diffusion_convection"
         self.Tres_init = 225
         self.Pres_init = 40
@@ -750,7 +827,7 @@ class World:
         "accuracy": 1, "DynamicFluidProperties": True}
         self.geothermal_gradient = (self.Tres_init - self.surface_temp)/self.well_depth * 1000
 
-        self.m_prd = 80
+        self.m_prd = 100
 
 if __name__ == '__main__':
     pass

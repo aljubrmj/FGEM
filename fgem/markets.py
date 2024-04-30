@@ -167,7 +167,7 @@ class TabularPowerMarket:
             col (str, optional): column name where ELCC can be accessed. Defaults to "elcc".
         """
 
-        if filepath and battery_duration:
+        if filepath:
             self.df_elcc = pd.read_csv(filepath)
             self.elcc_dict = self.df_elcc.set_index("Year")[col].to_dict()
             self.df["battery_elcc"] = self.df["year"].apply(lambda t: self.get_elcc(t))
