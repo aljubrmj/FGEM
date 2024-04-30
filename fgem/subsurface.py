@@ -1173,7 +1173,6 @@ class ULoopSBT(BaseReservoir):
 
 		# Following the design proposed by Eavor (https://pangea.stanford.edu/ERE/db/GeoConf/papers/SGW/2022/Beckers.pdf)
 		if "eavor" in closedloop_design.lower():
-			print("Running Eavor Closed Loop System Design ...")
 			vertical_section_length = 2000
 			vertical_well_spacing = 100
 			junction_depth = 4000
@@ -1260,7 +1259,6 @@ class ULoopSBT(BaseReservoir):
 			self.xlat, self.ylat, self.zlat = xlat, ylat, zlat
 
 		else:
-			print("Running DEFALUT-U Closed Loop System Design ...")
 			# Coordinates of injection well (coordinates are provided from top to bottom in the direction of flow)
 			self.zinj = np.arange(0, -self.well_depth -self.dx, -self.dx).reshape(-1, 1)
 			self.yinj = np.zeros((len(self.zinj), 1))
@@ -1501,7 +1499,7 @@ class ULoopSBT(BaseReservoir):
 		self.distributionz = np.delete(self.distributionz, self.interconnections, axis=0)
 
 		self.dynamic_properties = dynamic_properties
-		self.counter = 0
+		self.counter = -1
 
 		# Initialize SBT algorithm linear system of equation matrices
 		self.LL = np.zeros((3 * self.N, 3 * self.N))                # Will store the "left-hand side" of the system of equations

@@ -98,9 +98,10 @@ class World:
             m_bypass (Union[ndarray,float], optional): mass flow rates to be bypassed away from the power plant or turbine in kg/s. Defaults to 0.
             keep_records (bool, optional): whether or not to store records at each simulation timestep. Defaults to True.
         """
+        
         if self.reservoir_filename:
             m_prd = self.reservoir.df.loc[(self.reservoir.df["Date"] - self.time_curr).abs().argmin() , "m_kg_per_sec"]/self.num_prd
-            
+
         self.update_state(m_prd, m_inj, 
                           m_tes_in, m_tes_out, 
                           p_bat_ppin, p_bat_gridin, p_bat_out, 
@@ -520,7 +521,6 @@ class World:
                             powerplant_type=self.powerplant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II, SSR=self.SSR, 
                             drawdp=self.drawdp, plateau_length=self.plateau_length, reservoir_simulator_settings=self.reservoir_simulator_settings, ramey=self.ramey, PumpingModel=self.PumpingModel,
                             filepath=self.reservoir_filepath)
-            self.Tres_init = self.reservoir.Tres_init
 
         else:
             if self.reservoir_type == "energy_decline":
@@ -556,6 +556,9 @@ class World:
                                 num_inj=self.num_inj, waterloss=self.waterloss,
                                 powerplant_type=self.powerplant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II, SSR=self.SSR, 
                                 drawdp=self.drawdp, plateau_length=self.plateau_length, reservoir_simulator_settings=self.reservoir_simulator_settings, ramey=self.ramey, PumpingModel=self.PumpingModel)
+
+        # some reservoirs compute the intial reseroivr temperature internally, so we make sure to reset it in the world object
+        self.Tres_init = self.reservoir.Tres_init
 
         # Create power plant
         if "binary" in self.powerplant_type.lower():
