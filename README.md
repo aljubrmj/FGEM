@@ -9,8 +9,9 @@ Maybe you can mention me or this repo in the acknowledgements too
 
 <div align="center"> 
   <img src="docs/source/_static/fgem_logo.png" alt="logo" width="200" height="auto" />
-  <h1>Flexible Geothermal Economic Modeling</h1>
+  <h1>Flexible Geothermal Economics Modeling</h1>
 </div>
+
 
 ## See our [readthedocs](https://fgem.readthedocs.io/en/latest/about-introduction.html) for installation and usage instructions.
 
@@ -27,7 +28,7 @@ For more technical details, you may refer to our [Applied Energy Journal Article
 
 # Contributing
 
-We welcome your contributions to this project. Please see the [contributions](https://fgem.readthedocs.io/en/latest/usage-configuration.html) guide in our readthedocs page for more information. Please do not hesitate to contact aljubrmj@stanford.edu with specific questions, requests, or feature ideas.
+We welcome your contributions to this project. Please see the [contributions](https://fgem.readthedocs.io/en/latest/reference_contribution.html) guide in our readthedocs page for more information. Please do not hesitate to contact aljubrmj@stanford.edu with specific questions, requests, or feature ideas.
 
 # License
 
