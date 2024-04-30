@@ -44,5 +44,6 @@ usage-examples.md
 :hidden:
 
 reference_license.md
+reference_contribution.md
 reference_publications.md
 ```

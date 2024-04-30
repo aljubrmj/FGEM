@@ -11,7 +11,7 @@
     "_comment": "market_weather",
     "energy_market_filename": "wholesale.csv",
     "capacity_market_filename": "capacity.csv",
-    "resample": "12",
+    "resample": "1w",
     "weather_filename": "weather.csv",
 
     "_comment": "powerplant",
