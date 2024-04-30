@@ -10,3 +10,50 @@ The FGEM workflow requires the user to input a configuration file to describe th
    :widths: 22,10,10,33,10
    :file: _static/metadata.csv
 ```
+
+## `subsurface`
+
+```{eval-rst}
+.. csv-table::
+   :header-rows: 1
+   :widths: 22,10,10,33,10
+   :file: _static/subsurface.csv
+```
+
+## `power plant`
+
+```{eval-rst}
+.. csv-table::
+   :header-rows: 1
+   :widths: 22,10,10,33,10
+   :file: _static/powerplant.csv
+```
+
+## `market/weather`
+
+```{eval-rst}
+.. csv-table::
+   :header-rows: 1
+   :widths: 22,10,10,33,10
+   :file: _static/market_weather.csv
+```
+
+## `battery`
+
+```{eval-rst}
+.. csv-table::
+   :header-rows: 1
+   :widths: 22,10,10,33,10
+   :file: _static/battery.csv
+```
+
+## `thermal energy storage tank`
+
+```{eval-rst}
+.. csv-table::
+   :header-rows: 1
+   :widths: 22,10,10,33,10
+   :file: _static/tank.csv
+```
+
+
