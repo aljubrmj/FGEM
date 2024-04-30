@@ -221,14 +221,14 @@ class ORCPowerPlant(BasePowerPlant):
 class FlashPowerPlant(BasePowerPlant):
     """Single Flash Binary power plant."""
     def __init__(self, ppc, Tres, cf=1.0):
-         """Define attributes for the BasePowerPlant class.
+        """Define attributes for the BasePowerPlant class.
 
         Args:
             ppc (float): power plant nameplate capacity in MW.
             Tres (float): reservoir temperature in deg C.
             cf (float): capacity factor. Defualts to 1.
         """
-
+        
         super(FlashPowerPlant, self).__init__(ppc, Tres, cf)
         
     def compute_cplant(self, MaxProducedTemperature):

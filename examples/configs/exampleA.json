@@ -15,8 +15,8 @@
     },
     "downstream": {
         "powerplant": {
-            "power_plant_type": "Binary",
-            "ppc": 10,
+            "powerplant_type": "Binary",
+            "powerplant_capacity": 10,
             "cf": 1.0
     }
     },

@@ -663,9 +663,9 @@ class World:
         ylabels = list(qdict.values())
 
         span = span if span else range(0, self.max_simulation_steps-1)
-        fig, axes = plot_cols({" ": self.df_records}, span, quantities, 
+        fig = plot_cols({" ": self.df_records}, span, quantities, 
                                 figsize=(10,12), ylabels=ylabels, legend_loc=False, dpi=100, 
-                            formattime=False, return_figax=True)
+                            formattime=False)
         
         return fig
 
@@ -697,6 +697,7 @@ class World:
         self.battery_lifetime = 15
 
         self.tank_diameter = 0
+        self.tank_height = 0
         self.tank_cost = 0.00143453
 
         self.powerplant_capacity = 10
@@ -733,7 +734,7 @@ class World:
         self.inj_prd_ratio = 1.0
         self.waterloss = 0.05
         self.pumpeff = 0.75
-        self.DSR 1.0
+        self.DSR = 1.0
         self.SSR = 1.0
         self.PI = 20
         self.II = 20
