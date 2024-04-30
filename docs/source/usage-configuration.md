@@ -11,7 +11,7 @@ The FGEM workflow requires the user to input a configuration file to describe th
    :file: _static/metadata.csv
 ```
 
-## `subsurface`
+<!-- ## `subsurface`
 
 ```{eval-rst}
 .. csv-table::
@@ -54,6 +54,6 @@ The FGEM workflow requires the user to input a configuration file to describe th
    :header-rows: 1
    :widths: 22,10,10,33,10
    :file: _static/tank.csv
-```
+``` -->
 
 
