@@ -1,5 +1,5 @@
 ,Unit,Values,Description,Default
-ambient_temperature,¡ C,float,ambient temperature,20
+ambient_temperature,deg C,float,ambient temperature,20
 weather_filename,,str,"CSV file with hourly weather data for one full year (i.e., total of 8760 horus) . For instance, refer to ``examples/data/market/weather.csv``",
 energy_price,USD/MWh,float,energy price,40
 recs_price,USD/MWh,float,value of renewable energy credits (RECs) or green credits,10

@@ -1,7 +1,7 @@
 ,Unit,Values,Description,Default
 drilling_cost,USD/meter,bool,"geothermal well drilling cost in USD/meter. If not specified, correlations are used to estimate drilling cost as a function of measured depth.",
 reservoir_type,,str,"type of reservoir model. Options are (1) ""percentage_decline"" for PercentageDecline, (2) ""energy_decline"" for EnergyDecline, (3) ""diffusion_convection"" for DiffusionConvection, and (4) ""uloop"" for ULoop. For simulating conventional geothermal or enhanced geothermal systems, we recommend ""diffusion_convection"" as it is an anlytical solution. Models ""percentage_decline"" and ""energy_decline"" are conceptual. Meanwhile, ""uloop"" is used to simulate U-Loop closed loop systems.","""diffusion_convection"""
-Tres_init,¡ C,float,initial reservoir temperature,225
+Tres_init,deg C,float,initial reservoir temperature,225
 Pres_init,bar,float,initial reservoir pressure,40
 V_res,:math:`m^3`,float,bulk reservoir volume,5
 phi_res,,float,reservoir porosity,0.1
@@ -10,7 +10,7 @@ krock,W/m-K,float,reservoir themral conductivity,30
 drawdp,,float,property of the PercentageDecline reservoir model indicating the fixed  annual rate at which reservoir temperature declines,0.005
 plateau_length,years,float,property of the PercentageDecline reservoir model indicating the fixed  number of years for which the reservoir temperature does not drop initially.,3
 rock_energy_recovery,,float,property of the EnergyDecline reservoir model indicating the recovarable fraction of the total heat contained in the bulk rock volume in the subsurface.,1
-surface_temp,¡ C,float,near-surface temperauture (it could be identical to the ambient temperature),20
+surface_temp,deg C,float,near-surface temperauture (it could be identical to the ambient temperature),20
 well_depth,meters,float,true vertical depth of production and injection wells.,3000
 prd_well_diam,meters,float,diameter of production wells.,0.3115
 inj_well_diam,meters,float,diameter of injection wells.,0.3115
