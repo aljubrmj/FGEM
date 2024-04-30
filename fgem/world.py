@@ -566,12 +566,15 @@ class World:
             config (dict): project configuration
         """
         
-        for top_val in config.values():
-            for key1, val1 in top_val.items():
-                exec("self." + key1 + '=val1')
-                if isinstance(val1, dict):
-                    for key2, val2 in val1.items():
-                        exec("self." + key2 + '=val2')
+        for top_key, top_val in config.items():
+            if isinstance(top_val, dict):
+                for key1, val1 in top_val.items():
+                    exec("self." + key1 + '=val1')
+                    if isinstance(val1, dict):
+                        for key2, val2 in val1.items():
+                            exec("self." + key2 + '=val2')
+            else:
+                exec("self." + top_key + '=top_val')
 
     def plot_economics(self, 
                        figsize=(10, 10),

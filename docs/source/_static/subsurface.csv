@@ -27,5 +27,5 @@ lateral_diam,meters,float,property of the Uloop  reservoir model indicating when
 lateral_spacing,meters,float,property of the Uloop  reservoir model indicating the spacing between each two laterals,100
 closedloop_design,,str,"property of the Uloop  reservoir model indicating the closedloop design to be used. If set to ""default"", it constructs typical multilateral Uloop systems. If set to ""eavor"", it constructs a design similar to what is proposed by Eavor Deep 2.0.",
 dx,meters,int,property of the Uloop  reservoir model indicating the size of each mesh cell for the numerical solution.,
-ramey,,bool,whether or not to use Ramey's heat loss/gain across the wellbore.,false
+ramey,,bool,whether or not to use Ramey's heat loss/gain across the wellbore.,FALSE
 reservoir_simulator_settings,,dict,advanced settings used to expedite the reservoir simulation runs by enhancing or decreasing the timeframe at which the reservoir module is updated.,
