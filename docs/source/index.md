@@ -35,6 +35,7 @@ about-installation
 :hidden:
 
 usage-configuration.md
+usage-examples.md
 ```
 
 ```{toctree}
