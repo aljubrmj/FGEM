@@ -29,6 +29,6 @@ setup(
 
     packages=find_packages(),
     py_modules=['fgem'],
-    # include_package_data=True,
-    # package_data={'': ['data/market/*']}
+    include_package_data=True,
+    package_data={'fgem': ['data/*']}
 )
