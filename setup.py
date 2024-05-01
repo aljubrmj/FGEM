@@ -21,7 +21,11 @@ setup(
                     "numpy-financial>=1.0.0",
                     "timezonefinder>=6.2.0",
                     "meteostat>=1.6.5",
-                    "geopandas>=0.13.0"],
+                    "geopandas>=0.13.0",
+                    "s3fs>=2024.3.1",
+                    "zarr>=2.17.2",
+                    "fsspec>=2024.3.1",
+                    "kerchunk>=0.2.4"],
 
     packages=find_packages(),
     py_modules=['fgem'],

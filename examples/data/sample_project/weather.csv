@@ -1,4 +1,4 @@
-Date,temp,dwpt,rhum,prcp,snow,wdir,wspd,wpgt,pres,tsun,coco
+Date,T0,dwpt,rhum,prcp,snow,wdir,wspd,wpgt,pres,tsun,coco
 1/1/21 0:00,6.5,4.5,87,0,,0,0,,1020.5,,
 1/1/21 1:00,5.5,4.5,93,0,,0,0,,1020.6,,5
 1/1/21 2:00,5.5,3.5,87,0,,0,0,,1020.8,,5
