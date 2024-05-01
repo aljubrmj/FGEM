@@ -31,6 +31,7 @@ linestyles = {0: 'solid',
               2: 'dotted',
               3: 'dashdot'}
 
+
 class FastXsteam(object):
     
     """Faster corrleations for Steam Tables."""
@@ -830,6 +831,7 @@ def retrieve_weather(lat, lon, year, station_idx_limit=10):
         station_idx += 1
     
     return data
+
 
 if __name__ == "__main__":
     pass

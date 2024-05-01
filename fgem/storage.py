@@ -11,7 +11,7 @@ import pickle
 from fgem.utils.utils import FastXsteam
 from datetime import timedelta, datetime
 from pathlib import Path
-path = Path(__file__).parent
+parent_path = Path(__file__).parent
 
 steamTable = XSteam(XSteam.UNIT_SYSTEM_MKS)  # m/kg/sec/°C/bar/W
 from fgem.utils.utils import densitywater, viscositywater, heatcapacitywater
@@ -138,7 +138,7 @@ class TES:
 		self.timestep = timestep
 
 		# self.fxsteam = pickle.load(open(os.path.join(path, 'FastXsteam.pkl'), 'rb'))
-		self.fxsteam = CustomUnpickler(open(os.path.join(path, 'FastXsteam.pkl'), 'rb')).load()
+		self.fxsteam = CustomUnpickler(open(os.path.join(parent_path, 'FastXsteam.pkl'), 'rb')).load()
 		self.d, self.H, self.Lst, self.Lins = d, H, Lst, Lins
 		self.Tw, self.Tamb, self.pressurized_tank, self.max_thresh = Tw, Tamb, pressurized_tank, max_thresh
 

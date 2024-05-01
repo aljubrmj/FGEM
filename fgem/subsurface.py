@@ -524,8 +524,8 @@ class PercentageReservoir(BaseReservoir):
 		self.res_thickness = res_thickness
 		self.res_width = 1000
 
-		self.Tres_arr = self.Tres_init*np.ones(self.L+1)
-		for i in range(self.L+1):
+		self.Tres_arr = self.Tres_init*np.ones(self.L+2)
+		for i in range(self.L+2):
 			if i+1 > plateau_length:
 				self.Tres_arr[i] = (1 - drawdp) * self.Tres_arr[i-1]
 

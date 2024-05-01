@@ -98,7 +98,7 @@ class World:
             m_bypass (Union[ndarray,float], optional): mass flow rates to be bypassed away from the power plant or turbine in kg/s. Defaults to 0.
             keep_records (bool, optional): whether or not to store records at each simulation timestep. Defaults to True.
         """
-        
+
         if self.reservoir_filename:
             m_prd = self.reservoir.df.loc[(self.reservoir.df["Date"] - self.time_curr).abs().argmin() , "m_kg_per_sec"]/self.num_prd
 
@@ -484,10 +484,21 @@ class World:
         # Create weather
         self.weather = Weather()
         if self.weather_filepath:
-            self.weather.create_weather_model(filepath=self.weather_filepath, resample=False)
-            self.df_market = pd.merge(self.df_market, 
-                                      self.weather.df[['month', 'day', 'hour', "T0"]],
-                                      how='left', on=['month', 'day', 'hour'])
+            self.weather.create_weather_model(filepath=self.weather_filepath, 
+                                              resample=False,
+                                              sup3rcc_weather_forecast=self.sup3rcc_weather_forecast,
+                                              project_lat=self.project_lat,
+                                              project_long=self.project_long,
+                                              years=range(self.start_year, self.end_year)
+                                              )
+            if self.sup3rcc_weather_forecast:
+                self.df_market = pd.merge(self.df_market, 
+                        self.weather.df[['year', 'month', 'day', 'hour', "T0"]],
+                        how='left', on=['year', 'month', 'day', 'hour'])
+            else:
+                self.df_market = pd.merge(self.df_market, 
+                                        self.weather.df[['month', 'day', 'hour', "T0"]],
+                                        how='left', on=['month', 'day', 'hour'])
         else:
             self.df_market["T0"] = self.ambient_temperature
 
@@ -762,8 +773,8 @@ class World:
         self.L = 30
         self.d = 0.07
         self.inflation = 0.02
-        
-        self.drilling_cost = None
+        self.project_lat = None
+        self.project_long = None
 
         self.battery_costs_filename = None
         self.battery_duration = [0, 0]
@@ -796,7 +807,9 @@ class World:
         self.capacity_market_filename = None
         self.fat_factor = 1
         self.resample = "1Y"
+        self.sup3rcc_weather_forecast = False
 
+        self.drilling_cost = None
         self.reservoir_filename = None
         self.reservoir_type = "diffusion_convection"
         self.Tres_init = 225
