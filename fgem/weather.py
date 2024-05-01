@@ -110,42 +110,22 @@ def query_su3rcc_trh(year, lat, long, dst_dir="data/sup3rcc_cache"):
         os.mkdir(dst_dir)
     
     s3_path = f"s3://nrel-pds-sup3rcc/conus_mriesm20_ssp585_r1i1p1f1/v0.1.0/sup3rcc_conus_mriesm20_ssp585_r1i1p1f1_trh_{year}.h5"
-    metadata_json_filepath = f"{dst_dir}/{year}.json"
-    pickle_filepath = f"{dst_dir}/{year}.pkl"
-    
+    metadata_json_filepath = f"{dst_dir}/{year}.pkl"
+    meta_pickle_filepath = f"{dst_dir}/meta_{year}.pkl"
     meta_cols = ["lat", "long", "timezone", "elevation", "country", "state", "county", "offshore", "eez"]
-            
-    if os.path.exists(metadata_json_filepath) is False:
-        storage_opts = dict(mode="rb", anon=True, default_fill_cache=False,
-                default_cache_type="none")
 
-        h5chunks = SingleHdf5ToZarr(s3_path, storage_options=storage_opts,
-                                    inline_threshold=0)
-    
-        with open(metadata_json_filepath, 'wb') as out:
-            out.write(ujson.dumps(h5chunks.translate()).encode())
-    
-    if os.path.exists(pickle_filepath):
-        # df_meta, data, time_index = pickle.load(open(pickle_filepath, 'rb'))
-        df_meta, data, time_index = CustomUnpickler(open(os.path.join(dst_dir, pickle_filepath), 'rb')).load()
-        
-    else:
-        with open(metadata_json_filepath, "rb") as f:
-            mapper = fsspec.get_mapper("reference://",
-                                       fo=ujson.load(f),
-                                       remote_protocol="s3",
-                                       remote_options={"anon": True})
+    fo = pickle.load(open(metadata_json_filepath, 'rb'))
+    mapper = fsspec.get_mapper("reference://",
+                               fo=fo,
+                               remote_protocol="s3",
+                               remote_options={"anon": True})
+    data = zarr.open(mapper)
+    df_meta, time_index = pickle.load(open(meta_pickle_filepath, 'rb'))
 
-        data = zarr.open(mapper)
-        df_meta = pd.DataFrame(data.meta, columns=meta_cols)
-        df_meta[["lat", "long"]] = df_meta[["lat", "long"]].astype(float)
-        time_index = pd.to_datetime(data.time_index[:].astype(str))
-        
-        saveme = (df_meta, data, time_index)
-        pickle.dump(saveme, open(pickle_filepath, "wb"))
-    
     idx = ((df_meta["lat"] - lat).abs() + (df_meta["long"] - long).abs()).argmin()
-    arr = data['temperature_2m'][:, idx] / data['temperature_2m'].attrs["scale_factor"]
+    gid = df_meta.loc[idx, "gid"]
+    
+    arr = data['temperature_2m'][:, gid] / data['temperature_2m'].attrs["scale_factor"]
     
     df = pd.DataFrame()
     df["Date"] = time_index
