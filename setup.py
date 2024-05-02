@@ -28,7 +28,7 @@ setup(
                     "kerchunk>=0.2.4",
                     "joblib>=1.2.0",
                     "h5py>=3.10.0",
-                    "h5pyd>=0.18.0"]
+                    "h5pyd>=0.18.0"],
 
     packages=find_packages(),
     py_modules=['fgem'],
