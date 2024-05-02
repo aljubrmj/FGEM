@@ -906,6 +906,8 @@ class DiffusionConvection(BaseReservoir):
 		self.T_injs = np.array([70]) # randomly initialized
 		self.timesteps = np.array([1]) # first record gets minimal weight
 		self.dynamic_properties = dynamic_properties
+		self.prev_time_passed_seconds = 0
+		self.rhs_cumulative = 0
 
 		# For visualization purposes
 		self.configure_well_dimensions()
@@ -961,12 +963,14 @@ class DiffusionConvection(BaseReservoir):
 			self.cw_prd_bh = heatcapacitywater(self.T_prd_bh.mean())
 
 		self.Vavg = self.Vs.mean()
-		rhs, _ = integrate.quad(self.pde_solution, 0, self.time_passed_seconds, 
+		rhs, _ = integrate.quad(self.pde_solution, self.prev_time_passed_seconds, self.time_passed_seconds, 
                              	(self.time_passed_seconds, self.res_length, self.Vavg),
                               epsabs=1e-3, epsrel=1e-3,
                               )
+		self.rhs_cumulative += rhs
+		self.prev_time_passed_seconds = self.time_passed_seconds
 
-		self.Tres = rhs + self.Tres_init
+		self.Tres = self.rhs_cumulative + self.Tres_init
 		self.T_prd_bh = np.array(self.num_prd*[self.Tres], dtype='float')
 		self.T_inj_wh = np.array(self.num_inj*[T_inj], dtype='float')
 
@@ -1806,9 +1810,9 @@ class ULoopSBT(BaseReservoir):
 
 			if iiii == len(self.xinj):  # Upcoming pipe has first element temperature sum of all incoming water temperatures
 				for j in range(len(self.lateralendpoints)):
-					self.LL[0+ (iiii - 1) * 3, 0 + (self.lateralendpoints[j]) * 3] = -self.ulateral[j] / self.Deltaz[iiii-1] / 2 / self.lateralflowmultiplier * (self.fullyimplicit) * 2
+					self.LL[0+ (iiii - 1) * 3, 0 + (self.lateralendpoints[j]) * 3] = -self.ulateral[j] / self.Deltaz[iiii-1] / 2 / self.lateralflowmultiplier * (self.fullyimplicit) * 2 * (self.lateral_diam/self.prd_well_diam)**2
 					self.RR[0+(iiii - 1) * 3, 0] = 1 / Deltat * self.Twprevious[iiii-1] + self.uvector[iiii-1] / self.Deltaz[iiii-1] * (
-							-self.Twprevious[iiii-1] + np.sum(self.lateralflowallocation[j] * self.Twprevious[self.lateralendpoints[j]])) / 2 * (
+							-self.Twprevious[iiii-1] + (self.lateral_diam/self.prd_well_diam)**2 * np.sum(self.lateralflowallocation[j] * self.Twprevious[self.lateralendpoints[j]])) / 2 * (
 													1 - self.fullyimplicit) * 2
 			else:
 				self.LL[0+(iiii-1) * 3, 0 + (int(self.previouswaterelements[iiii-1])) * 3] = -self.uvector[iiii-1] / self.Deltaz[iiii-1] / 2 * (

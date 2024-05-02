@@ -753,10 +753,15 @@ class World:
         self.PPA_ROI = self.df_annual["PPA ROI [%]"].iloc[-1]
         self.PPA_PBP = self.df_annual_nominal.index[np.argmax((self.df_annual_nominal["PPA Cashflow [$MM]"].cumsum()>0).values)] - self.start_year
         self.PPA_IRR = npf.irr(self.df_annual_nominal["PPA Cashflow [$MM]"].values) * 100
-        self.NET_GEN = self.df_annual["Net Power Generation [MWhe]"].sum()
-        self.LCOE = self.df_annual["Cashout [$MM]"].sum()*1e6/nonzero(self.NET_GEN, 1E-1)
+        self.DISCOUNTED_NET_GEN = self.df_annual["Net Power Generation [MWhe]"].sum()
+        self.LCOE = self.df_annual["Cashout [$MM]"].sum()*1e6/nonzero(self.DISCOUNTED_NET_GEN, 1E-1)
         if self.LCOE < 0: # cases where pumping requirements are greater than gross power generation
             self.LCOE = 999
+        
+        self.NET_GEN = self.df_annual_nominal["Net Power Generation [MWhe]"].sum()
+        self.NET_CF = self.NET_GEN/(8760*self.L)/self.powerplant_capacity
+        self.AVG_T_AMB = self.df_records["Atm Temp [deg C]"].mean()
+
 
         # print economics
         if print_outputs:

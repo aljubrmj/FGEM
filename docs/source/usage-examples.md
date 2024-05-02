@@ -12,3 +12,4 @@ Refer to the following Jupyter Notebooks for examples on how to use FGEM:
 *  [Example-H: Tabular Reservoir Data](https://github.com/aljubrmj/FGEM/blob/main/examples/exampleH.ipynb)
 *  [Example-I: Uloop Systems](https://github.com/aljubrmj/FGEM/blob/main/examples/exampleI.ipynb)
 *  [Example-J: Complex Uloop Systems](https://github.com/aljubrmj/FGEM/blob/main/examples/exampleJ.ipynb)
+*  [Example-K: Coupling Sup3rCC weather forecasts with FGEM](https://github.com/aljubrmj/FGEM/blob/main/examples/exampleK.ipynb)
