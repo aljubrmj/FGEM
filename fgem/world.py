@@ -773,7 +773,7 @@ class World:
         """Set default parameters that are not specified by the user.
         """
 
-        self.project_data_dir = "./data/market"
+        self.project_data_dir = "./data/"
         self.time_init = "2025-01-01"
         self.L = 30
         self.d = 0.07
