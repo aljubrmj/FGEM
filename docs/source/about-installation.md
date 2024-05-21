@@ -11,10 +11,16 @@ conda activate my-package
 ```
 
 ## Step 2: Install FGEM
-Install FGEM as follows:
+To install the stable version of FGEM, run the following:
 
 ```bash
 pip install git+https://github.com/aljubrmj/FGEM
+```
+
+To install a different branch, append the above command with @branch. For instance, you can install the [develop](https://github.com/aljubrmj/FGEM/tree/develop) branch as follows:
+
+```bash
+pip install git+https://github.com/aljubrmj/FGEM@develop
 ```
 
 ## Step 3: Clone GitHub Repository [OPTIONAL]
@@ -24,6 +30,12 @@ If you run into issues, follow GitHub troubleshooting suggestions [here](https:/
 
 ### Using HTTPS
 
+To clone the master branch:
+```bash
+$ git clone https://github.com/aljubrmj/FGEM.git
+```
+
+To clone 
 ```bash
 $ git clone https://github.com/aljubrmj/FGEM.git
 ```
