@@ -220,9 +220,9 @@ def download_query_sup3rcc(year,
     
     print("Compute weather at coordinates ...")
     idx = np.abs(np.vstack((lat, long)).T[:,:,None] - df_meta[["lat", "long"]].values.T).sum(axis=1).argmin(axis=1)
-    gid = df_meta.loc[idx, "gid"]
+    gid = df_meta.loc[idx, "gid"].values
     arr = data[attribute][:, gid] / data[attribute].attrs["scale_factor"]
     columns = ["gid", "lat", "long"] + list(range(1, 8761))
-    df = pd.DataFrame(np.vstack((gid.values, lat, long, arr[:8760])).T, columns=columns)
+    df = pd.DataFrame(np.vstack((gid, lat, long, arr[:8760])).T, columns=columns)
     
     return df
