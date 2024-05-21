@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from joblib import Parallel, delayed
 from tqdm.notebook import tqdm
 import pickle
+import numpy as np
 
 from pathlib import Path
 parent_path = Path(__file__).parent
@@ -60,9 +61,9 @@ class Weather:
         if self.sup3rcc_weather_forecast:
             print("Query weather forecasts from Sup3rCC ...")
             if self.n_jobs<= 1:
-                self.df = pd.concat([query_su3rcc_trh(y, self.project_lat, self.project_long) for y in tqdm(self.years)])
+                self.df = pd.concat([query_sup3rcc_trh(y, self.project_lat, self.project_long) for y in tqdm(self.years)])
             else:
-                self.df = pd.concat(Parallel(n_jobs=self.n_jobs)(delayed(query_su3rcc_trh)(y, self.project_lat, self.project_long) for y in tqdm(self.years)))
+                self.df = pd.concat(Parallel(n_jobs=self.n_jobs)(delayed(query_sup3rcc_trh)(y, self.project_lat, self.project_long) for y in tqdm(self.years)))
         else:
             self.df = pd.read_csv(filepath)
 
@@ -103,7 +104,7 @@ class Weather:
         else:
             return self.df.loc[(self.df.month == t.month) & (self.df.day == t.day) & (self.df.hour == t.hour), "T0"].mean()
 
-def query_su3rcc_trh(year, lat, long, dst_dir="data/sup3rcc_cache"):
+def query_sup3rcc_trh(year, lat, long, dst_dir="data/sup3rcc_cache"):
     """Access Sup3rCC ambient temperature forecasts within FGEM, where meta data is aleady downloaded.
 
     Args:
@@ -145,40 +146,49 @@ def query_su3rcc_trh(year, lat, long, dst_dir="data/sup3rcc_cache"):
     
     return df
 
-def download_query_su3rcc_trh(year, lat, long, dst_dir="sup3rcc_cache"):
-    """Download and save Sup3rCC ambient temperature forecasts within FGEM, where meta data is aleady downloaded.
+def download_query_sup3rcc(year,
+                          lat, 
+                          long, 
+                          data_type="trh",
+                          attribute="temperature_2m",
+                          country="United States",
+                          dst_dir="sup3rcc_cache"):
+    
+    """Download and save metadata Sup3rCC forecasts within FGEM.
 
     Args:
         year (int): year for which to query ambient temperature.
-        lat (float): latitude.
-        long (float): longitude.
+        lat (list): list of latitudes.
+        long (list): list of longitudes.
+        data_type (str): data to retrieve: either 'trh', 'wind', 'solar', or 'pressure'.
+        attribute (str): the attribute/variable to be retrieved. This must correspond to the specified data-type.
+        country (str): if the retreiveal is for a single country, specifying it can speed up the process.
         dst_dir (str): distination directory where meta data should be saved.
 
+
         Returns:
-        pd.DataFrame: hourly ambient temperature forecasts.
+        pd.DataFrame: hourly forecasts for the given attribute, year, and locations.
 
         Examples:
-            >>> years = range(2025, 2059)
-            >>> dst_dir = "sup3rcc_cache"
-            >>> lat, long = 35.43336868286133, -120.2300033569336
-            >>> n_jobs = 4
-            >>> # Not parallelized
-            >>> df = pd.concat([download_query_su3rcc_trh(y, lat, long, dst_dir) for y in tqdm(years)])
-            >>> # Parallelized
-            >>> df = pd.concat(Parallel(n_jobs=n_jobs)(delayed(download_query_su3rcc_trh)(y, lat, long, dst_dir) for y in tqdm(years)))
+            >>> data_type = "wind"
+            >>> attribute = "windspeed_100m"
+            >>> year = 2050
+            >>> lat = np.random.randint(24.521208, 49.382808, size=10)
+            >>> long = np.random.randint(-124.736342, -66.945392, size=10)
+            >>> df = download_query_su3rcc_trh(year, lat, long, data_type, attribute)
 
     """
 
     if not os.path.exists(dst_dir):
         os.mkdir(dst_dir)
         
-    s3_path = f"s3://nrel-pds-sup3rcc/conus_mriesm20_ssp585_r1i1p1f1/v0.1.0/sup3rcc_conus_mriesm20_ssp585_r1i1p1f1_trh_{year}.h5"
-    metadata_json_filepath = f"{dst_dir}/{year}.pkl"
-    meta_pickle_filepath = f"{dst_dir}/meta_{year}.pkl"
+    s3_path = f"s3://nrel-pds-sup3rcc/conus_mriesm20_ssp585_r1i1p1f1/v0.1.0/sup3rcc_conus_mriesm20_ssp585_r1i1p1f1_{data_type}_{year}.h5"
+    metadata_filepath = f"{dst_dir}/{data_type}_{year}.pkl"
     
     meta_cols = ["lat", "long", "timezone", "elevation", "country", "state", "county", "offshore", "eez"]
-            
-    if os.path.exists(metadata_json_filepath) is False:
+    
+    if not os.path.exists(metadata_filepath):
+        print(f"Retrieve metadata from NREL AWS for {data_type}_{year} ... ")
         storage_opts = dict(mode="rb", anon=True, default_fill_cache=False,
                 default_cache_type="none")
 
@@ -186,35 +196,33 @@ def download_query_su3rcc_trh(year, lat, long, dst_dir="sup3rcc_cache"):
                                     inline_threshold=0)
         
         fo = h5chunks.translate()
-        pickle.dump(fo, open(metadata_json_filepath, "wb"))
+        
+        mapper = fsspec.get_mapper("reference://",
+                                   fo=fo,
+                                   remote_protocol="s3",
+                                   remote_options={"anon": True})
     
-    else:
-        fo = pickle.load(open(metadata_json_filepath, 'rb'))
-
-    mapper = fsspec.get_mapper("reference://",
-                               fo=fo,
-                               remote_protocol="s3",
-                               remote_options={"anon": True})
-    data = zarr.open(mapper)
     
-    if os.path.exists(meta_pickle_filepath):
-        df_meta, time_index = pickle.load(open(meta_pickle_filepath, 'rb'))
-    else:
+        data = zarr.open(mapper)
         time_index = pd.to_datetime(data.time_index[:].astype(str))
         df_meta = pd.DataFrame(data.meta, columns=meta_cols)
-        df_meta = df_meta[df_meta["country"] == "United States"].reset_index(names=["gid"])
+        if country:
+            df_meta = df_meta[df_meta["country"] == country]
+        df_meta = df_meta.reset_index(names=["gid"])
         df_meta[["lat", "long"]] = df_meta[["lat", "long"]].astype(float)
 
-        pickle.dump((df_meta[["lat", "long", "gid", "country"]], time_index), open(meta_pickle_filepath, "wb"))
+        pickle.dump((mapper, df_meta, time_index), open(metadata_filepath, "wb"))
     
-    idx = ((df_meta["lat"] - lat).abs() + (df_meta["long"] - long).abs()).argmin()
+    else:
+        print(f"Retrieve metadata from cache for {data_type}_{year} ... ")
+        mapper, df_meta, time_index = pickle.load(open(metadata_filepath, "rb"))
+        data = zarr.open(mapper)
+    
+    print("Compute weather at coordinates ...")
+    idx = np.abs(np.vstack((lat, long)).T[:,:,None] - df_meta[["lat", "long"]].values.T).sum(axis=1).argmin(axis=1)
     gid = df_meta.loc[idx, "gid"]
-    
-    arr = data['temperature_2m'][:, gid] / data['temperature_2m'].attrs["scale_factor"]
-    
-    df = pd.DataFrame()
-    df["Date"] = time_index
-    df["Date"] = df["Date"].dt.tz_localize(None)
-    df["T0"] = arr
+    arr = data[attribute][:, gid] / data[attribute].attrs["scale_factor"]
+    columns = ["gid", "lat", "long"] + list(range(1, 8761))
+    df = pd.DataFrame(np.vstack((gid.values, lat, long, arr[:8760])).T, columns=columns)
     
     return df
