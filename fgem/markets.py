@@ -56,7 +56,7 @@ class TabularPowerMarket:
         
         self.df.reset_index(inplace=True)
         self.df['TimeDiff'] = self.df.Date.diff().bfill()
-        self.df['TimeDiff_seconds'] = self.df.TimeDiff.apply(lambda x: x.seconds)
+        self.df['TimeDiff_seconds'] = self.df.TimeDiff.apply(lambda x: x.total_seconds())
 
         self.df['year'] = self.df.Date.apply(lambda x: x.year)
         self.df['month'] = self.df.Date.apply(lambda x: x.month)
@@ -75,14 +75,25 @@ class TabularPowerMarket:
         self.df.ffill(inplace=True)
 
         self.df["price_raw"] = self.df["price"]
+        self.timestep_hrs = self.df["TimeDiff"].iloc[0].total_seconds()/3600
 
         if fat_factor > 1:
+            self.df["price"] = self.df["price_raw"]
+            fat_window = int(max(24/self.timestep_hrs, 1))
             price_means = np.zeros(len(self.df))
             for i in range(int(len(price_means)/fat_window)):
                 price_means[fat_window*i:fat_window*i+fat_window] = \
                     self.df["price_raw"][fat_window*i:fat_window*i+fat_window].mean()
         
-            self.df["price"] = self.df["price_raw"] + fat_factor * (self.df["price_raw"] - price_means)
+            self.df["price"] += fat_factor * (self.df["price_raw"] - price_means)
+
+            fat_window = int(max(8760/self.timestep_hrs, 1))
+            price_means = np.zeros(len(self.df))
+            for i in range(int(len(price_means)/fat_window)):
+                price_means[fat_window*i:fat_window*i+fat_window] = \
+                    self.df["price_raw"][fat_window*i:fat_window*i+fat_window].mean()
+        
+            self.df["price"] += fat_factor * (self.df["price_raw"] - price_means)
 
     def create_capacity_market(self,
                                 filepath=None,

@@ -13,7 +13,9 @@ import math
 from scipy import integrate
 import pickle
 from scipy.special import erf, erfc, jv, yv, exp1
-from fgem.utils.utils import compute_f, densitywater, viscositywater, heatcapacitywater, vaporpressurewater, nonzero
+from .utils.utils import compute_f, densitywater, viscositywater, heatcapacitywater, vaporpressurewater, nonzero
+from collections import defaultdict
+
 # FILE_BASE_DIR = os.path.dirname(__file__)
 
 steamtable = XSteam(XSteam.UNIT_SYSTEM_MKS)
@@ -26,7 +28,7 @@ class BaseReservoir(object):
 				 surface_temp,
 				 L,
 				 time_init,
-				 well_depth,
+				 well_tvd,
 				 prd_well_diam,
 				 inj_well_diam,
 				 num_prd,
@@ -47,7 +49,8 @@ class BaseReservoir(object):
                  N_ramey_mv_avg=168,
                  reservoir_simulator_settings={"fast_mode": False, "period": 3600*8760/12},
 				 PumpingModel="OpenLoop",
-				 timestep=timedelta(hours=1)
+				 timestep=timedelta(hours=1),
+				 krock_wellbore=3,
                  ):
 		"""Initialize base reservoir class.
 
@@ -57,7 +60,7 @@ class BaseReservoir(object):
 			surface_temp (float): surface temperature in deg C.
 			L (float): project lifetime in years.
 			time_init (datetime): initial time.
-			well_depth (float): well depth in meters.
+			well_tvd (float): well depth in meters.
 			prd_well_diam (float): production well diameter in meters.
 			inj_well_diam (float): injection well diameter in meters.
 			num_prd (int): number of producers.
@@ -79,6 +82,7 @@ class BaseReservoir(object):
 			reservoir_simulator_settings (dict, optional): information used to reduce the required timestepping when simulating the reservoir. It comes with keys of "fast_mode" to turn it on and "period" to specify the time period needed to pass before the reservoir state is updated, which is aimed at reducing computational requirements in exchange for loss in accuracy. Defaults to {"fast_mode": False, "period": 3600*8760/12}.
 			PumpingModel (str, optional): model type used to compute pressure losses (either "OpenLoop" or "ClosedLoop"). Defaults to "OpenLoop".
 			timestep (datetime.timedelta, optional): simulation timestep size. Defaults to timedelta(hours=1).
+			krock_wellbore (float): thermal conductivity around the wellbore, used for wellbore heat gain/loss
 		"""
 
 		self.geothermal_gradient = geothermal_gradient
@@ -86,7 +90,7 @@ class BaseReservoir(object):
 		self.L = L
 		self.time_init = time_init
 		self.time_curr = time_init
-		self.well_depth = well_depth
+		self.well_tvd = well_tvd
 		self.num_prd = num_prd
 		self.num_inj = num_inj
 		self.Tres_init = Tres_init
@@ -107,17 +111,16 @@ class BaseReservoir(object):
 		self.waterloss = waterloss
 		self.pumpeff = pumpeff
 		self.powerplant_type = powerplant_type
-		self.pumpdepth =np.zeros(self.num_prd)
 		self.dT_prd = 0.0
 		self.dT_inj = 0.0
-		self.m_prd_ramey_mv_avg = 100*np.ones(self.num_prd) # randomly initialized, but it will quickly converge following the dispatch strategy
+		self.m_prd_ramey_mv_avg = 100 # randomly initialized, but it will quickly converge following the dispatch strategy
+		self.m_inj_ramey_mv_avg = 100 # randomly initialized, but it will quickly converge following the dispatch strategy
 		self.N_ramey_mv_avg = N_ramey_mv_avg
 		self.reservoir_simulator_settings = reservoir_simulator_settings
 		self.reservoir_simulator_settings["time_passed"] = np.inf
 		self.PumpingModel = PumpingModel
-		self.m_prd_old = np.array(self.num_prd*[0], dtype='float')
-		self.m_inj_old = np.array(self.num_inj*[0], dtype='float')
 		self.timestep = timestep
+		self.krock_wellbore = krock_wellbore
 
 		#initialize wellhead and bottomhole quantities
 		self.T_prd_wh = np.array(self.num_prd*[self.Tres_init], dtype='float')
@@ -128,7 +131,14 @@ class BaseReservoir(object):
 		#reservoir hydrostatic pressure [kPa]
 		self.CP = 4.64E-7
 		self.CT = 9E-4/(30.796*self.Tres_init**(-0.552))
-		self.Phydrostatic = 0+1./self.CP*(math.exp(densitywater(self.surface_temp)*9.81*self.CP/1000*(self.well_depth-self.CT/2*(self.geothermal_gradient/1000)*self.well_depth**2))-1)
+		self.Phydrostatic = 0+1./self.CP*(math.exp(densitywater(self.surface_temp)*9.81*self.CP/1000*(self.well_tvd-self.CT/2*(self.geothermal_gradient/1000)*self.well_tvd**2))-1)
+
+		self.cache = defaultdict(lambda: defaultdict(int))
+
+		# ramey estimates
+		time_seconds = 8760*3600 # always assume one year passed across
+		self.framey_prd = -np.log(1.1*(self.prd_well_diam/2.)/np.sqrt(4.*self.alpharock*time_seconds))-0.29
+		self.framey_inj = -np.log(1.1*(self.inj_well_diam/2.)/np.sqrt(4.*self.alpharock*time_seconds))-0.29
 
 	def pre_model(self, t, m_prd, m_inj, T_inj):
 		"""Computations to be performed before stepping the reservoir model.
@@ -197,11 +207,6 @@ class BaseReservoir(object):
 		self.dT_prd = self.T_prd_bh - self.T_prd_wh
 		self.dT_inj = self.T_inj_bh - T_inj
 		self.T_inj_wh = np.array(self.num_inj*[T_inj], dtype='float')
-
-		if self.pumping:
-			self.compute_pumpingpower(m_prd, m_inj, T_inj)
-		else:
-			self.PumpingPower_ideal = 0.0
 	
 	def step(self, m_prd, T_inj, T_amb, m_inj=None):
 		"""Stepping the reservoir and wellbore models.
@@ -219,9 +224,6 @@ class BaseReservoir(object):
 		else:
 			self.m_inj = np.array(self.num_inj * [self.m_prd.sum()/self.num_inj])
 
-		self.same_flow_rates = np.allclose(self.m_prd, self.m_prd_old) and np.allclose(self.m_inj, self.m_inj_old)
-		self.m_prd_old, self.m_inj_old = self.m_prd, self.m_inj
-
 		self.time_curr += self.timestep
 		self.pre_model(self.time_curr, self.m_prd, self.m_inj, T_inj)
 		self.pre_wellbore_calculations(self.time_curr, self.m_prd, self.m_inj, T_inj, T_amb)
@@ -232,8 +234,7 @@ class BaseReservoir(object):
 			if self.reservoir_simulator_settings["time_passed"] >= self.reservoir_simulator_settings["period"]:
 				self.reservoir_simulator_settings["time_passed"] = 0.0
 			else:
-				if not self.same_flow_rates:
-					self.wellbore_calculations(self.time_curr, self.m_prd, self.m_inj, T_inj, T_amb)
+				self.wellbore_calculations(self.time_curr, self.m_prd, self.m_inj, T_inj, T_amb)
 				return
 
 		self.model(self.time_curr, self.m_prd, self.m_inj, T_inj)
@@ -249,8 +250,11 @@ class BaseReservoir(object):
 			T_inj (float): injection temperature in deg C.
 			T_amb (float): ambient temperature in deg C.
 		"""
-
+		# average over wells
+		m_prd = m_prd.mean()
+		m_inj = m_inj.mean()
 		self.m_prd_ramey_mv_avg = ((self.N_ramey_mv_avg-1) * self.m_prd_ramey_mv_avg + m_prd)/self.N_ramey_mv_avg
+		self.m_inj_ramey_mv_avg = ((self.N_ramey_mv_avg-1) * self.m_inj_ramey_mv_avg + m_inj)/self.N_ramey_mv_avg
   
 	def compute_ramey(self, t, m_prd, m_inj, T_inj, T_amb):
 		"""Ramey's model wellbore heat loss/gain.
@@ -264,126 +268,25 @@ class BaseReservoir(object):
 		"""
      
 		# Producer calculations
-		time_seconds = max((t - self.time_init).seconds, 8760*3600) # always assume one year passed across #
-		cpwater = heatcapacitywater(self.T_prd_bh.mean())
-		framey = -np.log(1.1*(self.prd_well_diam/2.)/np.sqrt(4.*self.alpharock*time_seconds))-0.29
-		rameyA = self.m_prd_ramey_mv_avg*cpwater*framey/2/math.pi/self.krock
+		Tavg = self.T_prd_bh.mean()
+		cpwater = heatcapacitywater(Tavg)
+		rameyA = self.m_prd_ramey_mv_avg*cpwater*self.framey_prd/2/math.pi/self.krock_wellbore
 
-		self.T_prd_wh = (self.Tres - (self.geothermal_gradient/1000)*self.well_depth) + \
-		(self.geothermal_gradient/1000) * rameyA * (1 - np.exp(-self.well_depth/nonzero(rameyA))) + \
-		(self.T_prd_bh - self.Tres) * np.exp(-self.well_depth/nonzero(rameyA))
+		self.T_prd_wh = (self.Tres - (self.geothermal_gradient/1000)*self.well_tvd) + \
+		(self.geothermal_gradient/1000) * rameyA * (1 - np.exp(-self.well_tvd/nonzero(rameyA))) + \
+		(self.T_prd_bh - self.Tres) * np.exp(-self.well_tvd/nonzero(rameyA))
 
 		# Injector calculations
-		cpwater = heatcapacitywater(T_inj)
-		framey = -np.log(1.1*(self.inj_well_diam/2.)/np.sqrt(4.*self.alpharock*time_seconds))-0.29
-		rameyA = m_inj*cpwater*framey/2/math.pi/self.krock
+		Tavg = T_inj
+		# cpwater = heatcapacitywater(Tavg)
+		Tround = round(Tavg, 0)
+		cpwater = self.cache["cpwater"].get(Tround, heatcapacitywater(Tavg))
+		self.cache["cpwater"][Tround] = cpwater
+		rameyA = self.m_inj_ramey_mv_avg*cpwater*self.framey_inj/2/math.pi/self.krock_wellbore
 
-		self.T_inj_bh = (self.surface_temp + (self.geothermal_gradient/1000)*self.well_depth) - \
+		self.T_inj_bh = (self.surface_temp + (self.geothermal_gradient/1000)*self.well_tvd) - \
 		(self.geothermal_gradient/1000) * rameyA + \
-		(T_inj - self.surface_temp + (self.geothermal_gradient/1000) * rameyA) * np.exp(-self.well_depth/nonzero(rameyA))
-  
-	def compute_pumpingpower(self, m_prd, m_inj, T_inj):
-		"""Pumping power calculations.
-
-		Args:
-            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s.
-            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
-			T_inj (float): injection temperature in deg C.
-		"""
-
-		if "closed" in self.PumpingModel.lower():
-			diam = self.radiusvector*2
-			m = m_inj[None].T
-			dL = self.dL[None]
-			dz = self.dz[None]
-			T = self.Twprevious[None]
-			rho = densitywater(T)
-			mu = viscositywater(T)
-
-			v = (m/self.numberoflaterals)*(1.+self.waterloss)/rho/(math.pi/4.*diam**2)
-			Re = 4.*(m/self.numberoflaterals)*(1.+self.waterloss)/(mu*math.pi*diam)
-			f = compute_f(Re, np.array(self.num_inj*[diam]))
-			
-			# Necessary injection wellhead pressure [kPa]
-			self.DPSurfaceplant = 68.95
-			self.Pprodwellhead = 0.0
-
-			# pressure drop in pipes in parallel is the same, so we average things out
-			self.DP_flow = f*(rho*v**2/2)*(dL/diam)/1e3
-			self.DP_flow = self.DP_flow[:,:self.interconnections[1]+1].sum() + self.DP_flow[:,self.interconnections[1]+1:].sum()/self.numberoflaterals
-
-			# hydrsotatic is counted once along depth, so we make sure we do not double count hydrostatic pressure build-up from different laterals
-			self.DP_hydro = rho*9.81*dz/1e3
-			self.DP_hydro = self.DP_hydro[:,:self.interconnections[1]+1].sum() + self.DP_hydro[:,self.interconnections[1]+1:].sum()/self.numberoflaterals
-
-			self.DP = self.Pprodwellhead + self.DP_flow + self.DP_hydro - self.DPSurfaceplant
-
-			self.PumpingPowerInj = self.DP*m_inj/densitywater(T_inj)/self.pumpeff/1e3
-			self.WHP_Prod = -self.DP.mean()
-			self.PumpingPowerProd = np.array([0.0]) # no pumps at producers in closed loop designs
-
-			# Total pumping power
-			self.PumpingPower_ideal = np.maximum(self.PumpingPowerInj.sum() + self.PumpingPowerProd.sum(), 0.0)
-
-		else:
-			# Production wellbore fluid conditions [kPa]
-			Tprodaverage = self.T_prd_bh-self.dT_prd/4. #most of temperature drop happens in upper section (because surrounding rock temperature is lowest in upper section)
-			self.rhowaterprod = densitywater(Tprodaverage) #replace with correlation based on Tprodaverage
-			muwaterprod = viscositywater(Tprodaverage)
-			self.vprod = (m_prd/self.numberoflaterals)/self.rhowaterprod/(math.pi/4.*self.prd_well_diam**2)
-			Rewaterprod = 4.*(m_prd/self.numberoflaterals)/(muwaterprod*math.pi*self.prd_well_diam) #laminar or turbulent flow?
-			self.f3 = compute_f(Rewaterprod, np.array(self.num_prd*[self.prd_well_diam]))
-
-			# Injection well conditions
-			Tinjaverage = T_inj
-			self.rhowaterinj = densitywater(Tinjaverage)
-			muwaterinj = viscositywater(Tinjaverage)
-			self.vinj = (m_inj/self.numberoflaterals)*(1.+self.waterloss)/self.rhowaterinj/(math.pi/4.*self.inj_well_diam**2)
-			Rewaterinj = 4.*(m_inj/self.numberoflaterals)*(1.+self.waterloss)/(muwaterinj*math.pi*self.inj_well_diam) #laminar or turbulent flow?
-			self.f1 = compute_f(Rewaterinj, np.array(self.num_inj*[self.inj_well_diam]))
-
-			#reservoir hydrostatic pressure [kPa] 
-			self.CT = 9E-4/(30.796*self.Tres**(-0.552))
-			self.Phydrostatic = 0+1./self.CP*(math.exp(densitywater(self.surface_temp)*9.81*self.CP/1000*(self.well_tvd-self.CT/2*(self.geothermal_gradient/1000)*self.well_tvd**2))-1)
-
-			# ORC power plant case, with pumps at both injectors and producers
-			Pexcess = 344.7 #[kPa] = 50 psi. Excess pressure covers non-condensable gas pressure and net positive suction head for the pump
-			self.Pprodwellhead = vaporpressurewater(self.T_prd_bh) + Pexcess #[kPa] is minimum production pump inlet pressure and minimum wellhead pressure
-			# Following tip from CLGWG where operational settings allow for no vapor pressure to form:
-			self.PIkPa = self.PI/(self.rhowaterprod/1000)/100 #convert PI from l/s/bar to kg/s/kPa
-
-			# Calculate pumping depth ... note, highest pumping requirements happen on day one of the project where vapor pressure closer to wellhead is the highest before the reservoir starts to deplete
-			if self.pumpdepth.sum() == 0.0:
-				self.pumpdepth = self.well_tvd + (self.Pprodwellhead - self.Phydrostatic + m_prd/self.PIkPa)/(self.f3*(self.rhowaterprod*self.vprod**2/2.)*(1/self.prd_well_diam)/1E3 + self.rhowaterprod*9.81/1E3)
-				self.pumpdepth = np.clip(self.pumpdepth, 0, np.inf)
-				pumpdepthfinal = np.max(self.pumpdepth)
-				if pumpdepthfinal <= 0:
-					pumpdepthfinal = 0
-				elif pumpdepthfinal > 600:
-					print("Warning: FGEM calculates pump depth to be deeper than 600 m. Verify reservoir pressure, production well flow rate and production well dimensions")  
-			# Calculate production well pumping pressure [kPa]
-			self.DP3 = self.Pprodwellhead - (self.Phydrostatic - m_prd/self.PIkPa - self.rhowaterprod*9.81*self.well_tvd/1E3 - self.f3*(self.rhowaterprod*self.vprod**2/2.)*(self.well_md/self.prd_well_diam)/1E3)
-			PumpingPowerProd = self.DP3*m_prd/self.rhowaterprod/self.pumpeff/1e3 #[MWe] total pumping power for production wells
-			self.PumpingPowerProd = np.clip(PumpingPowerProd, 0, np.inf)
-			
-			self.IIkPa = self.II/(self.rhowaterinj/1000)/100 #convert II from l/s/bar to kg/s/kPa
-			
-			# Necessary injection wellhead pressure [kPa]
-			self.Pinjwellhead = self.Phydrostatic + m_inj*(1+self.waterloss)/self.IIkPa - self.rhowaterinj*9.81*self.well_tvd/1E3 + self.f1*(self.rhowaterinj*self.vinj**2/2)*(self.well_md/self.inj_well_diam)/1e3
-
-			# Plant outlet pressure [kPa]
-			self.DPSurfaceplant = 68.95 #[kPa] assumes 10 psi pressure drop in surface equipment
-			self.Pplantoutlet = (self.Pprodwellhead - self.DPSurfaceplant).mean()
-
-			# Injection pump pressure [kPa]
-			self.DP1 = self.Pinjwellhead-self.Pplantoutlet
-			PumpingPowerInj = self.DP1*m_inj/self.rhowaterinj/self.pumpeff/1e3 #[MWe] total pumping power for injection wells
-
-			self.PumpingPowerInj = np.clip(PumpingPowerInj, 0, np.inf)
-			
-			self.WHP_Prod = -self.DP3
-			# Total pumping power
-			self.PumpingPower_ideal = self.PumpingPowerInj.sum() + self.PumpingPowerProd.sum()
+		(T_inj - self.surface_temp + (self.geothermal_gradient/1000) * rameyA) * np.exp(-self.well_tvd/nonzero(rameyA))
 
 	def plot_doublet(self, dpi=150):
 		"""Visualize a doublet of the proposed system. Using this method requires to first implement :py:func:`~subsurface.BaseReservoir.configure_well_dimensions`.
@@ -421,7 +324,6 @@ class BaseReservoir(object):
 			handles.append(col4_patch)
 			
 		plt.legend(handles=handles)
-		plt.title("Demonstration of a Single Doublet")
 
 		return fig
 
@@ -434,7 +336,7 @@ class PercentageReservoir(BaseReservoir):
 				 surface_temp,
 				 L,
 				 time_init,
-				 well_depth,
+				 well_tvd,
 				 prd_well_diam,
 				 inj_well_diam,
 				 num_prd,
@@ -467,7 +369,7 @@ class PercentageReservoir(BaseReservoir):
 			surface_temp (float): surface temperature in deg C.
 			L (float): project lifetime in years.
 			time_init (datetime): initial time.
-			well_depth (float): well depth in meters.
+			well_tvd (float): well depth in meters.
 			prd_well_diam (float): production well diameter in meters.
 			inj_well_diam (float): injection well diameter in meters.
 			num_prd (int): number of producers.
@@ -497,7 +399,7 @@ class PercentageReservoir(BaseReservoir):
 											surface_temp,
 											L,
 											time_init,
-											well_depth,
+											well_tvd,
 											prd_well_diam,
 											inj_well_diam,
 											num_prd,
@@ -518,7 +420,7 @@ class PercentageReservoir(BaseReservoir):
 											N_ramey_mv_avg,
            									reservoir_simulator_settings)
 		self.numberoflaterals = 1
-		self.well_tvd = well_depth
+		self.well_tvd = well_tvd
 		self.well_md = self.well_tvd
 		self.res_length = 2000
 		self.res_thickness = res_thickness
@@ -594,7 +496,7 @@ class EnergyDeclineReservoir(BaseReservoir):
 				 surface_temp,
 				 L,
 				 time_init,
-				 well_depth,
+				 well_tvd,
 				 prd_well_diam,
 				 inj_well_diam,
 				 num_prd,
@@ -630,7 +532,7 @@ class EnergyDeclineReservoir(BaseReservoir):
 			surface_temp (float): surface temperature in deg C.
 			L (float): project lifetime in years.
 			time_init (datetime): initial time.
-			well_depth (float): well depth in meters.
+			well_tvd (float): well depth in meters.
 			prd_well_diam (float): production well diameter in meters.
 			inj_well_diam (float): injection well diameter in meters.
 			num_prd (int): number of producers.
@@ -663,7 +565,7 @@ class EnergyDeclineReservoir(BaseReservoir):
 											surface_temp,
 											L,
 											time_init,
-											well_depth,
+											well_tvd,
 											prd_well_diam,
 											inj_well_diam,
 											num_prd,
@@ -686,7 +588,7 @@ class EnergyDeclineReservoir(BaseReservoir):
 											PumpingModel)
 
 		self.numberoflaterals = 1
-		self.well_tvd = well_depth
+		self.well_tvd = well_tvd
 		self.well_md = self.well_tvd
 		self.res_length = 2000
 		self.res_thickness = res_thickness
@@ -785,7 +687,7 @@ class DiffusionConvection(BaseReservoir):
 				 surface_temp,
 				 L,
 				 time_init,
-				 well_depth,
+				 well_tvd,
 				 prd_well_diam,
 				 inj_well_diam,
 				 num_prd,
@@ -820,7 +722,7 @@ class DiffusionConvection(BaseReservoir):
 			surface_temp (float): surface temperature in deg C.
 			L (float): project lifetime in years.
 			time_init (datetime): initial time.
-			well_depth (float): well depth in meters.
+			well_tvd (float): well depth in meters.
 			prd_well_diam (float): production well diameter in meters.
 			inj_well_diam (float): injection well diameter in meters.
 			num_prd (int): number of producers.
@@ -852,7 +754,7 @@ class DiffusionConvection(BaseReservoir):
 											surface_temp,
 											L,
 											time_init,
-											well_depth,
+											well_tvd,
 											prd_well_diam,
 											inj_well_diam,
 											num_prd,
@@ -875,7 +777,7 @@ class DiffusionConvection(BaseReservoir):
 											PumpingModel)
 		
 		self.numberoflaterals = 1
-		self.well_tvd = well_depth
+		self.well_tvd = well_tvd
 		self.well_md = self.well_tvd + lateral_length
 		self.lateral_length = lateral_length
 		self.phi_res = phi_res
@@ -883,7 +785,9 @@ class DiffusionConvection(BaseReservoir):
 		self.V_res_per_well = V_res/self.num_prd # make it for a single well
 		if self.lateral_length == 0: # vertical well
 			# consider a square reservoir and compute cross sectional area
+			# self.res_length = np.sqrt(self.V_res_per_well*1e9/self.res_thickness) # meters
 			self.res_length = np.sqrt(self.V_res_per_well*1e9/self.res_thickness) # meters
+
 		else:
 			# consider adjacent and parallel 1 injector & 2 producer system where res_length is the distance between them ... only half of the volume is used
 			self.res_length = self.V_res_per_well*1e9/(self.res_thickness * self.lateral_length)
@@ -959,8 +863,16 @@ class DiffusionConvection(BaseReservoir):
 		"""
 
 		if self.dynamic_properties:
-			self.rhow_prd_bh = densitywater(self.T_prd_bh.mean())
-			self.cw_prd_bh = heatcapacitywater(self.T_prd_bh.mean())
+			Tavg = self.T_prd_bh.mean()
+			# self.rhow_prd_bh = densitywater(Tavg)
+			# self.cw_prd_bh = self.cw_prd_bh
+
+			Tround = round(Tavg, 0)
+			self.rhow_prd_bh = self.cache["densitywater"].get(Tround, densitywater(Tavg))
+			self.cache["densitywater"][Tround] = self.rhow_prd_bh
+
+			self.cw_prd_bh = self.cache["cpwater"].get(Tround, heatcapacitywater(Tavg))
+			self.cache["cpwater"][Tround] = self.cw_prd_bh
 
 		self.Vavg = self.Vs.mean()
 		rhs, _ = integrate.quad(self.pde_solution, self.prev_time_passed_seconds, self.time_passed_seconds, 
@@ -1034,7 +946,7 @@ class ULoopSBT(BaseReservoir):
 				 surface_temp,
 				 L,
 				 time_init,
-				 well_depth,
+				 well_tvd,
 				 prd_well_diam,
 				 inj_well_diam,
 				 num_prd,
@@ -1072,6 +984,8 @@ class ULoopSBT(BaseReservoir):
                  reservoir_simulator_settings={"fast_mode": False, "accuracy": 5, "DynamicFluidProperties": False},
 				 PumpingModel="ClosedLoop",
 				 closedloop_design="Default",
+				 FMM=1,
+				 FMMtriggertime=3600*24*10,
                  ):
 
 		"""Initialize reservoir model.
@@ -1082,7 +996,7 @@ class ULoopSBT(BaseReservoir):
 			surface_temp (float): surface temperature in deg C.
 			L (float): project lifetime in years.
 			time_init (datetime): initial time.
-			well_depth (float): well depth in meters.
+			well_tvd (float): well depth in meters.
 			prd_well_diam (float): production well diameter in meters.
 			inj_well_diam (float): injection well diameter in meters.
 			num_prd (int): number of producers.
@@ -1126,7 +1040,7 @@ class ULoopSBT(BaseReservoir):
 											surface_temp,
 											L,
 											time_init,
-											well_depth,
+											well_tvd,
 											prd_well_diam,
 											inj_well_diam,
 											num_prd,
@@ -1148,7 +1062,7 @@ class ULoopSBT(BaseReservoir):
 											reservoir_simulator_settings,
 											PumpingModel)
 
-		self.well_tvd = well_depth
+		self.well_tvd = well_tvd
 		self.well_md = self.well_tvd + numberoflaterals * half_lateral_length
 		self.half_lateral_length = half_lateral_length
 		self.lateral_length = 2 * half_lateral_length
@@ -1170,10 +1084,13 @@ class ULoopSBT(BaseReservoir):
 		self.geothermal_gradient = geothermal_gradient/1000 #C/m
 		self.surface_temp = surface_temp
 		self.times_arr = times_arr
+		self.lateral_spacing = lateral_spacing
+		self.res_thickness = res_thickness 
+		self.FMM = FMM #if 1, use fast multi-pole methold like approach (i.e., combine old heat pulses to speed up simulation)
+		self.FMMtriggertime = FMMtriggertime #threshold time beyond which heat pulses can be combined with others [s
+		self.Deltat = self.timestep.total_seconds()
 		N = 10
 		self.dx = dx if dx else self.lateral_length//N
-		self.lateral_spacing = lateral_spacing
-		self.res_thickness = 1000 
 
 		# Following the design proposed by Eavor (https://pangea.stanford.edu/ERE/db/GeoConf/papers/SGW/2022/Beckers.pdf)
 		if "eavor" in closedloop_design.lower():
@@ -1184,7 +1101,7 @@ class ULoopSBT(BaseReservoir):
 			angle = 20*np.pi/180
 			element_length = 150
 
-			N = 3
+			N = 2
 			# generate inj well profile
 			zinj = np.linspace(0, -vertical_section_length, N).reshape(-1, 1)
 			yinj = np.zeros((len(zinj), 1))
@@ -1228,8 +1145,8 @@ class ULoopSBT(BaseReservoir):
 
 				
 			# lateral template ...
-			lateral_length = (well_depth-abs(z_ip[0, -1]))/np.cos(angle)
-			z_template_lateral = np.linspace(z_ip[0, -1], -well_depth, N)
+			lateral_length = (well_tvd-abs(z_ip[0, -1]))/np.cos(angle)
+			z_template_lateral = np.linspace(z_ip[0, -1], -well_tvd, N)
 			z_template_lateral = np.concatenate((z_template_lateral, 
 												z_template_lateral[[-1]]+element_length,
 												z_template_lateral[::-1]+2*element_length
@@ -1264,12 +1181,12 @@ class ULoopSBT(BaseReservoir):
 
 		else:
 			# Coordinates of injection well (coordinates are provided from top to bottom in the direction of flow)
-			self.zinj = np.arange(0, -self.well_depth -self.dx, -self.dx).reshape(-1, 1)
+			self.zinj = np.arange(0, -self.well_tvd -self.dx, -self.dx).reshape(-1, 1)
 			self.yinj = np.zeros((len(self.zinj), 1))
 			self.xinj = -(self.lateral_length/2) * np.ones((len(self.zinj), 1))
 
 			# Coordinates of production well (coordinates are provided from bottom to top in the direction of flow)
-			self.zprod = np.arange(-self.well_depth, 0 + self.dx, self.dx).reshape(-1, 1)
+			self.zprod = np.arange(-self.well_tvd, 0 + self.dx, self.dx).reshape(-1, 1)
 			self.yprod = np.zeros((len(self.zprod), 1))
 			self.xprod = (self.lateral_length/2) * np.ones((len(self.zprod), 1))
 
@@ -1288,7 +1205,7 @@ class ULoopSBT(BaseReservoir):
 				self.ylat = np.array(lats).T
 			else:
 				self.ylat = np.zeros_like(self.xlat)
-			self.zlat = -self.well_depth * np.ones_like(self.xlat)
+			self.zlat = -self.well_tvd * np.ones_like(self.xlat)
 			
 		# Merge x-, y-, and z-coordinates
 		self.x = np.concatenate((self.xinj, self.xprod, self.xlat.flatten(order="F")[:,None]))
@@ -1415,8 +1332,8 @@ class ULoopSBT(BaseReservoir):
 		self.timeforlinesource = max(self.radiusvector)**2 / self.alpha_m * self.LimitCylinderModelRequired  # Calculates minimum time step size when line source model becomes applicable [s]
 		self.timeforfinitelinesource = max(self.Deltaz)**2 / self.alpha_m * self.LimitInfiniteModel  # Calculates minimum time step size when finite line source model should be considered [s]
 
-		self.fpcminarg = min(self.Deltaz)**2 / (4 * self.alpha_m * (self.times_arr[-1] * 3600))
-		self.fpcmaxarg = max(self.Deltaz)**2 / (4 * self.alpha_m * (min(self.times_arr[1:] - self.times_arr[:-1]) * 3600))
+		self.fpcminarg = min(self.Deltaz)**2 / (4 * self.alpha_m * (self.times_arr[-1] * self.Deltat))
+		self.fpcmaxarg = max(self.Deltaz)**2 / (4 * self.alpha_m * (min(self.times_arr[1:] - self.times_arr[:-1]) * self.Deltat))
 		self.Amin1vector = np.logspace(np.log10(self.fpcminarg) - 0.1, np.log10(self.fpcmaxarg) + 0.1, self.NoArgumentsFinitePipeCorrection)
 		self.finitecorrectiony = np.zeros(self.NoArgumentsFinitePipeCorrection)
 		for i, Amin1 in enumerate(self.Amin1vector):
@@ -1426,7 +1343,7 @@ class ULoopSBT(BaseReservoir):
 			Adomain1 = np.logspace(np.log10(Amin1), np.log10(Amax1), self.NoDiscrFinitePipeCorrection)
 			self.finitecorrectiony[i] = np.trapz(-1 / (Adomain1 * 4 * np.pi * self.k_m) * erfc(1/2 * np.power(Adomain1, 1/2)), Adomain1)
 			
-		self.besselminarg = self.alpha_m * (min(self.times_arr[1:] - self.times_arr[:-1]) * 3600) / max(self.radiusvector)**2
+		self.besselminarg = self.alpha_m * (min(self.times_arr[1:] - self.times_arr[:-1]) * self.Deltat) / max(self.radiusvector)**2
 		self.besselmaxarg = self.alpha_m * self.timeforlinesource / min(self.radiusvector)**2
 		self.deltazbessel = np.logspace(-10, 8, self.NoDiscrInfCylIntegration)
 		self.argumentbesselvec = np.logspace(np.log10(self.besselminarg) - 0.5, np.log10(self.besselmaxarg) + 0.5, self.NoArgumentsInfCylIntegration)
@@ -1439,7 +1356,7 @@ class ULoopSBT(BaseReservoir):
 		self.elementcenters = 0.5 * np.column_stack((self.x[1:], self.y[1:], self.z[1:])) + 0.5 * np.column_stack((self.x[:-1], self.y[:-1], self.z[:-1]))  # Matrix that stores the mid point coordinates of each element
 		self.interconnections = self.interconnections - 1
 		self.elementcenters = np.delete(self.elementcenters, self.interconnections.reshape(-1,1), axis=0)  # Remove duplicate coordinates
-		self.SMatrix = np.zeros((self.N, self.N))  # Initializes the spacing matrix, which holds the distance between center points of each element [m]
+		self.SMatrix = np.zeros((self.N, self.N)) # Initializes the spacing matrix, which holds the distance between center points of each element [m]
 		
 		for i in range(self.N):
 			self.SMatrix[i, :] = np.sqrt((self.elementcenters[i, 0] - self.elementcenters[:, 0])**2 + (self.elementcenters[i, 1] - self.elementcenters[:, 1])**2 + (self.elementcenters[i, 2] - self.elementcenters[:, 2])**2)
@@ -1477,16 +1394,16 @@ class ULoopSBT(BaseReservoir):
 
 		self.MaxSMatrixSorted = np.max(self.SMatrixSorted, axis=0)
 
-		self.indicesyoucanneglectupfront = self.alpha_m * (np.ones((self.N-1, 1)) * self.times_arr * 3600) / (self.MaxSMatrixSorted[1:].reshape(-1, 1) * np.ones((1, len(self.times_arr * 3600))))**2 / self.LimitNPSpacingTime
+		self.indicesyoucanneglectupfront = self.alpha_m * (np.ones((self.N-1, 1)) * self.times_arr * self.Deltat) / (self.MaxSMatrixSorted[1:].reshape(-1, 1) * np.ones((1, len(self.times_arr))))**2 / self.LimitNPSpacingTime
 		self.indicesyoucanneglectupfront[self.indicesyoucanneglectupfront > 1] = 1
 
 		self.lastneighbourtoconsider = np.zeros(len(self.times_arr))
 		for i in range(len(self.times_arr)):
 			self.lntc = np.where(self.indicesyoucanneglectupfront[:, i] == 1)[0]
 			if len(self.lntc) == 0:
-				self.lastneighbourtoconsider[i] = 1
+				self.lastneighbourtoconsider[i] = 0
 			else:
-				self.lastneighbourtoconsider[i] = max(2, self.lntc[-1] + 1)
+				self.lastneighbourtoconsider[i] = max(1, self.lntc[-1] + 1)
 
 		self.distributionx = np.zeros((len(self.x) - 1, self.M + 1))
 		self.distributiony = np.zeros((len(self.x) - 1, self.M + 1))
@@ -1513,6 +1430,12 @@ class ULoopSBT(BaseReservoir):
 		self.TwMatrix = np.zeros((len(self.times_arr), self.N))         # Initializes the matrix that holds the fluid temperature over time
 		self.TwMatrix[0, :] = self.Twprevious
 
+		#Initialize FMM arrays
+		self.combinedtimes = np.array([0])
+		self.combinedQ = np.zeros((self.N, 1))
+		self.combinedtimes2ndlevel = np.array([0])
+		self.combinedtimes3rdlevel = np.array([0])
+
 		self.configure_well_dimensions()
 
 	def pre_model(self, t, m_prd, m_inj, T_inj):
@@ -1524,7 +1447,7 @@ class ULoopSBT(BaseReservoir):
             m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
 			T_inj (float): injection temperature in deg C.
 		"""
-		pass
+		self.counter += 1
 
 	def model(self, t, m_prd, m_inj, T_inj):
 		"""Computations to be performed when stepping the reservoir model.
@@ -1537,19 +1460,28 @@ class ULoopSBT(BaseReservoir):
 		"""
 
 		if self.reservoir_simulator_settings["DynamicFluidProperties"]:
-			self.rho_f = densitywater(self.Tres)
-			self.cp_f = heatcapacitywater(self.Tres) # J/kg-degC
-			self.mu_f = viscositywater(self.Tres)
+			Tavg = self.Tres
+			# self.rho_f = densitywater(Tavg)
+			# self.mu_f = viscositywater(Tavg)
+			# self.cp_f = heatcapacitywater(Tavg)
+			Tround = round(Tavg, 0)
+			self.rho_f = self.cache["densitywater"].get(Tround, densitywater(Tavg))
+			self.cache["densitywater"][Tround] = self.rho_f
+
+			self.mu_f = self.cache["viscositywater"].get(Tround, viscositywater(Tavg))
+			self.cache["viscositywater"][Tround] = self.mu_f
+
+			self.cp_f = self.cache["cpwater"].get(Tround, heatcapacitywater(Tavg))
+			self.cache["cpwater"][Tround] = self.cp_f
+
 			self.alpha_f = self.k_f / self.rho_f / self.cp_f  # Fluid thermal diffusivity [m2/s]
 			self.Pr_f = self.mu_f / self.rho_f / self.alpha_f  # Fluid Prandtl number [-]
-
-		self.counter += 1
 
 		if self.dynamic_properties:
 			self.rhow_prd_bh = densitywater(self.T_prd_bh.mean())
 			self.cw_prd_bh = heatcapacitywater(self.T_prd_bh.mean()) # J/kg-degC
 
-		Deltat = self.timestep.total_seconds() # Current time step size [s]
+		self.Deltat = self.timestep.total_seconds() # Current time step size [s]
 		Tin = T_inj #injection temperature is the same for all doublets as they assumingly feed into a single power plant
 		m = m_prd.mean() #take the mean of all doublets
 
@@ -1587,31 +1519,32 @@ class ULoopSBT(BaseReservoir):
 			else:
 				self.Rtvector[self.interconnections[dd] - self.numberoflaterals:] = self.Rtlateral[dd - 1] * np.ones(len(self.xlat[:, 0]) - 1)
 
-		if self.alpha_m * Deltat / max(self.radiusvector)**2 > self.LimitCylinderModelRequired:
-			self.CPCP = np.ones(self.N) * 1 / (4 * np.pi * self.k_m) * exp1(self.radiusvector**2 / (4 * self.alpha_m * Deltat))  # Use line source model if possible
+		if self.alpha_m * self.Deltat / max(self.radiusvector)**2 > self.LimitCylinderModelRequired:
+			self.CPCP = np.ones(self.N) * 1 / (4 * np.pi * self.k_m) * exp1(self.radiusvector**2 / (4 * self.alpha_m * self.Deltat))  # Use line source model if possible
 		else:
-			self.CPCP = np.ones(self.N) * np.interp(self.alpha_m * Deltat / self.radiusvector**2, self.argumentbesselvec, self.besselcylinderresult)  # Use cylindrical source model if required
+			self.CPCP = np.ones(self.N) * np.interp(self.alpha_m * self.Deltat / self.radiusvector**2, self.argumentbesselvec, self.besselcylinderresult)  # Use cylindrical source model if required
 
-		if Deltat > self.timeforfinitelinesource:  # For long time steps, the finite length correction should be applied
-			self.CPCP = self.CPCP + np.interp(self.Deltaz**2 / (4 * self.alpha_m * Deltat), self.Amin1vector, self.finitecorrectiony)
-
+		if self.Deltat > self.timeforfinitelinesource:  # For long time steps, the finite length correction should be applied
+			self.CPCP = self.CPCP + np.interp(self.Deltaz**2 / (4 * self.alpha_m * self.Deltat), self.Amin1vector, self.finitecorrectiony)
 
 		if self.counter > 1:  # After the second time step, we need to keep track of previous heat pulses
 
-			self.CPOP = np.zeros((self.N, self.counter-1))
+			self.CPOP = np.zeros((self.N, len(self.timesFMM)-1))
 			self.indexpsstart = 0
-			self.indexpsend = np.where(self.timeforpointssource < (self.times_arr[self.counter] - self.times_arr[1:self.counter]) * 3600)[-1]
+			self.indexpsend = np.where(self.timeforpointssource < (self.times_arr[self.counter] - self.timesFMM[1:]) * self.Deltat)[-1]
 			if self.indexpsend.size > 0:
 				self.indexpsend = self.indexpsend[-1] + 1
 			else:
 				self.indexpsend = self.indexpsstart - 1
+			
 			if self.indexpsend >= self.indexpsstart:  # Use point source model if allowed
 
 				self.CPOP[:, 0:self.indexpsend] = self.Deltaz * np.ones((self.N, self.indexpsend)) / (4 * np.pi * np.sqrt(self.alpha_m * np.pi) * self.k_m) * (
-						np.ones(self.N) * (1 / np.sqrt((self.times_arr[self.counter] - self.times_arr[self.indexpsstart + 1:self.indexpsend + 2]) * 3600) -
-						1 / np.sqrt((self.times_arr[self.counter] - self.times_arr[self.indexpsstart:self.indexpsend+1]) * 3600)))
+						np.ones(self.N) * (1 / np.sqrt((self.times_arr[self.counter] - self.timesFMM[self.indexpsstart + 1:self.indexpsend + 2]) * self.Deltat) -
+						1 / np.sqrt((self.times_arr[self.counter] - self.timesFMM[self.indexpsstart:self.indexpsend+1]) * self.Deltat)))
+
 			self.indexlsstart = self.indexpsend + 1
-			self.indexlsend = np.where(self.timeforlinesource < (self.times_arr[self.counter] - self.times_arr[1:self.counter]) * 3600)[0]
+			self.indexlsend = np.where(self.timeforlinesource < (self.times_arr[self.counter] - self.timesFMM[1:]) * self.Deltat)[0]
 			if self.indexlsend.size == 0:
 				self.indexlsend = self.indexlsstart - 1
 			else:
@@ -1619,11 +1552,11 @@ class ULoopSBT(BaseReservoir):
 
 			if self.indexlsend >= self.indexlsstart:  # Use line source model for more recent heat pulse events
 
-				self.CPOP[:, self.indexlsstart:self.indexlsend+1] = np.ones((self.N,1)) * 1 / (4*np.pi*self.k_m) * (exp1((self.radiusvector**2).reshape(len(self.radiusvector ** 2),1) / (4*self.alpha_m*(self.times_arr[self.counter]-self.times_arr[self.indexlsstart:self.indexlsend+1]) * 3600).reshape(1,len(4 * self.alpha_m * (self.times_arr[self.counter] - self.times_arr[self.indexlsstart:self.indexlsend+1]) * 3600)))-\
-					exp1((self.radiusvector**2).reshape(len(self.radiusvector ** 2),1) / (4 * self.alpha_m * (self.times_arr[self.counter]-self.times_arr[self.indexlsstart+1:self.indexlsend+2]) * 3600).reshape(1,len(4 * self.alpha_m * (self.times_arr[self.counter] - self.times_arr[self.indexlsstart+1:self.indexlsend+2]) * 3600))))
+				self.CPOP[:, self.indexlsstart:self.indexlsend+1] = np.ones((self.N,1)) * 1 / (4*np.pi*self.k_m) * (exp1((self.radiusvector**2).reshape(len(self.radiusvector ** 2),1) / (4*self.alpha_m*(self.times_arr[self.counter]-self.timesFMM[self.indexlsstart:self.indexlsend+1]) * self.Deltat).reshape(1,len(4 * self.alpha_m * (self.times_arr[self.counter] - self.timesFMM[self.indexlsstart:self.indexlsend+1]) * self.Deltat)))-\
+					exp1((self.radiusvector**2).reshape(len(self.radiusvector ** 2),1) / (4 * self.alpha_m * (self.times_arr[self.counter]-self.timesFMM[self.indexlsstart+1:self.indexlsend+2]) * self.Deltat).reshape(1,len(4 * self.alpha_m * (self.times_arr[self.counter] - self.timesFMM[self.indexlsstart+1:self.indexlsend+2]) * self.Deltat))))
 
 			self.indexcsstart = max(self.indexpsend, self.indexlsend) + 1
-			self.indexcsend = self.counter - 2
+			self.indexcsend = len(self.timesFMM) - 2
 
 			if self.indexcsstart <= self.indexcsend:  # Use cylindrical source model for the most recent heat pulses
 
@@ -1631,28 +1564,28 @@ class ULoopSBT(BaseReservoir):
 				self.CPOPdim =self.CPOP[:, self.indexcsstart:self.indexcsend+1].shape
 				self.CPOPPH = self.CPOPPH.T.ravel()
 				self.CPOPPH = (np.ones(self.N) * ( \
-							np.interp(self.alpha_m * ((self.times_arr[self.counter] - self.times_arr[self.indexcsstart:self.indexcsend+1]) * 3600).reshape(len((self.times_arr[self.counter] - self.times_arr[self.indexcsstart:self.indexcsend+1]) * 3600),1) / (self.radiusvector ** 2).reshape(len(self.radiusvector ** 2),1).T, self.argumentbesselvec, self.besselcylinderresult) - \
-							np.interp(self.alpha_m * ((self.times_arr[self.counter] - self.times_arr[self.indexcsstart+1: self.indexcsend+2]) * 3600).reshape(len((self.times_arr[self.counter] - self.times_arr[self.indexcsstart+1:self.indexcsend+2]) * 3600),1) / (self.radiusvector ** 2).reshape(len(self.radiusvector ** 2),1).T, self.argumentbesselvec, self.besselcylinderresult))).reshape(-1,1)
+							np.interp(self.alpha_m * ((self.times_arr[self.counter] - self.timesFMM[self.indexcsstart:self.indexcsend+1]) * self.Deltat).reshape(len((self.times_arr[self.counter] - self.timesFMM[self.indexcsstart:self.indexcsend+1]) * self.Deltat),1) / (self.radiusvector ** 2).reshape(len(self.radiusvector ** 2),1).T, self.argumentbesselvec, self.besselcylinderresult) - \
+							np.interp(self.alpha_m * ((self.times_arr[self.counter] - self.timesFMM[self.indexcsstart+1: self.indexcsend+2]) * self.Deltat).reshape(len((self.times_arr[self.counter] - self.timesFMM[self.indexcsstart+1:self.indexcsend+2]) * self.Deltat),1) / (self.radiusvector ** 2).reshape(len(self.radiusvector ** 2),1).T, self.argumentbesselvec, self.besselcylinderresult))).reshape(-1,1)
 				self.CPOPPH=self.CPOPPH.reshape((self.CPOPdim),order='F')
 				self.CPOP[:, self.indexcsstart:self.indexcsend+1] = self.CPOPPH
 
 			self.indexflsstart = self.indexpsend + 1
-			self.indexflsend = np.where(self.timeforfinitelinesource < (self.times_arr[self.counter] - self.times_arr[1:self.counter]) * 3600)[-1]
+			self.indexflsend = np.where(self.timeforfinitelinesource < (self.times_arr[self.counter] - self.timesFMM[1:]) * self.Deltat)[-1]
 			if self.indexflsend.size == 0:
 				self.indexflsend = self.indexflsstart - 1
 			else:
 				self.indexflsend = self.indexflsend[-1] - 1
 
 			if self.indexflsend >= self.indexflsstart:  # Perform finite length correction if needed
-				self.CPOP[:, self.indexflsstart:self.indexflsend+2] = self.CPOP[:, self.indexflsstart:self.indexflsend+2] + (np.interp(np.matmul((self.Deltaz.reshape(len(self.Deltaz),1) ** 2),np.ones((1,self.indexflsend-self.indexflsstart+2))) / np.matmul(np.ones((self.N,1)),(4 * self.alpha_m * ((self.times_arr[self.counter] - self.times_arr[self.indexflsstart:self.indexflsend+2]) * 3600).reshape(len((self.times_arr[self.counter] - self.times_arr[self.indexflsstart:self.indexflsend+2]) * 3600),1)).T), self.Amin1vector, self.finitecorrectiony) - \
-				np.interp(np.matmul((self.Deltaz.reshape(len(self.Deltaz),1) ** 2),np.ones((1,self.indexflsend-self.indexflsstart+2))) / np.matmul(np.ones((self.N,1)),(4 * self.alpha_m * ((self.times_arr[self.counter] - self.times_arr[self.indexflsstart+1:self.indexflsend+3]) * 3600).reshape(len((self.times_arr[self.counter] - self.times_arr[self.indexflsstart:self.indexflsend+2]) * 3600),1)).T), self.Amin1vector, self.finitecorrectiony))
+				self.CPOP[:, self.indexflsstart:self.indexflsend+2] = self.CPOP[:, self.indexflsstart:self.indexflsend+2] + (np.interp(np.matmul((self.Deltaz.reshape(len(self.Deltaz),1) ** 2),np.ones((1,self.indexflsend-self.indexflsstart+2))) / np.matmul(np.ones((self.N,1)),(4 * self.alpha_m * ((self.times_arr[self.counter] - self.timesFMM[self.indexflsstart:self.indexflsend+2]) * self.Deltat).reshape(len((self.times_arr[self.counter] - self.timesFMM[self.indexflsstart:self.indexflsend+2]) * self.Deltat),1)).T), self.Amin1vector, self.finitecorrectiony) - \
+				np.interp(np.matmul((self.Deltaz.reshape(len(self.Deltaz),1) ** 2),np.ones((1,self.indexflsend-self.indexflsstart+2))) / np.matmul(np.ones((self.N,1)),(4 * self.alpha_m * ((self.times_arr[self.counter] - self.timesFMM[self.indexflsstart+1:self.indexflsend+3]) * self.Deltat).reshape(len((self.times_arr[self.counter] - self.timesFMM[self.indexflsstart:self.indexflsend+2]) * self.Deltat),1)).T), self.Amin1vector, self.finitecorrectiony))
 
 
 		self.NPCP = np.zeros((self.N, self.N))
 		np.fill_diagonal(self.NPCP, self.CPCP)
 
 
-		self.spacingtest = self.alpha_m * Deltat / self.SMatrixSorted[:, 1:]**2 / self.LimitNPSpacingTime
+		self.spacingtest = self.alpha_m * self.Deltat / self.SMatrixSorted[:, 1:]**2 / self.LimitNPSpacingTime
 		self.maxspacingtest = np.max(self.spacingtest,axis=0)
 
 
@@ -1668,7 +1601,7 @@ class ULoopSBT(BaseReservoir):
 			self.indicestostorematrix = (self.indicestocalculate - 1) * self.N + np.arange(1, self.N) * np.ones((1, self.maxindextoconsider - self.mindexNPCP + 1))
 			self.indicestostorematrixtranspose = self.indicestostorematrix.T
 			self.indicestostorelinear = self.indicestostorematrix.ravel()
-			self.NPCP[self.indicestostorelinear] = self.Deltaz[self.indicestocalculatelinear] / (4 * np.pi * self.k_m * self.SMatrix[self.indicestostorelinear]) * erf(self.SMatrix[self.indicestostorelinear] / np.sqrt(4 * self.alpha_m * Deltat))
+			self.NPCP[self.indicestostorelinear] = self.Deltaz[self.indicestocalculatelinear] / (4 * np.pi * self.k_m * self.SMatrix[self.indicestostorelinear]) * erf(self.SMatrix[self.indicestostorelinear] / np.sqrt(4 * self.alpha_m * self.Deltat))
 		#Calculate and store neighbouring pipes for current pulse as set of line sources
 		if self.mindexNPCP > 1 and self.maxindextoconsider > 0:
 			self.lastindexfls = min(self.mindexNPCP, self.maxindextoconsider + 1)
@@ -1685,21 +1618,21 @@ class ULoopSBT(BaseReservoir):
 								np.square((self.midpointsy[self.midpointsindices].reshape(len(self.midpointsindices),1)*( np.ones((1, self.M + 1))) - self.distributiony[self.indicestocalculatelinear,:])) +
 								np.square((self.midpointsz[self.midpointsindices].reshape(len(self.midpointsindices),1)*( np.ones((1, self.M + 1))) - self.distributionz[self.indicestocalculatelinear,:])))
 
-			self.NPCP[np.unravel_index(self.indicestostorelinear, self.NPCP.shape, 'F')] =  self.Deltaz[self.indicestocalculatelinear] / self.M * np.sum((1 - erf(self.rultimate / np.sqrt(4 * self.alpha_m * Deltat))) / (4 * np.pi * self.k_m * self.rultimate) * np.matmul(np.ones((self.N*(self.lastindexfls-1),1)),np.concatenate((np.array([1/2]), np.ones(self.M-1), np.array([1/2]))).reshape(-1,1).T), axis=1)
+			self.NPCP[np.unravel_index(self.indicestostorelinear, self.NPCP.shape, 'F')] =  self.Deltaz[self.indicestocalculatelinear] / self.M * np.sum((1 - erf(self.rultimate / np.sqrt(4 * self.alpha_m * self.Deltat))) / (4 * np.pi * self.k_m * self.rultimate) * np.matmul(np.ones((self.N*(self.lastindexfls-1),1)),np.concatenate((np.array([1/2]), np.ones(self.M-1), np.array([1/2]))).reshape(-1,1).T), axis=1)
 
 		self.BB = np.zeros((self.N, 1))
 		if self.counter > 1 and self.lastneighbourtoconsider[self.counter] > 0:
 			self.SMatrixRelevant = self.SMatrixSorted[:, 1 : int(self.lastneighbourtoconsider[self.counter] + 1)]
 			self.SoverLRelevant = self.SoverLSorted[:, 1 : int(self.lastneighbourtoconsider[self.counter]) + 1]
 			self.SortedIndicesRelevant = self.SortedIndices[:, 1 : int(self.lastneighbourtoconsider[self.counter]) + 1] 
-			self.maxtimeindexmatrix = self.alpha_m * np.ones((self.N * int(self.lastneighbourtoconsider[self.counter]), 1)) * (self.times_arr[self.counter] - self.times_arr[1:self.counter]) * 3600 / (self.SMatrixRelevant.ravel().reshape(-1,1) * np.ones((1,self.counter-1)))**2
+			self.maxtimeindexmatrix = self.alpha_m * np.ones((self.N * int(self.lastneighbourtoconsider[self.counter]), 1)) * (self.times_arr[self.counter] - self.timesFMM[1:]) * self.Deltat / (self.SMatrixRelevant.ravel().reshape(-1,1) * np.ones((1,len(self.timesFMM)-1)))**2
 
-			self.allindices = np.arange(self.N * int(self.lastneighbourtoconsider[self.counter]) * (self.counter - 1))
+			self.allindices = np.arange(self.N * int(self.lastneighbourtoconsider[self.counter]) * (len(self.timesFMM) - 1))
 			#if (i>=154):
 			#   
-			self.pipeheatcomesfrom = np.matmul(self.SortedIndicesRelevant.T.ravel().reshape(len(self.SortedIndicesRelevant.ravel()),1), np.ones((1,self.counter - 1)))
+			self.pipeheatcomesfrom = np.matmul(self.SortedIndicesRelevant.T.ravel().reshape(len(self.SortedIndicesRelevant.ravel()),1), np.ones((1,len(self.timesFMM) - 1)))
 			self.pipeheatgoesto = np.arange(self.N).reshape(self.N,1) * np.ones((1, int(self.lastneighbourtoconsider[self.counter])))
-			self.pipeheatgoesto = self.pipeheatgoesto.transpose().ravel().reshape(len(self.pipeheatgoesto.ravel()),1) * np.ones((1, self.counter - 1))
+			self.pipeheatgoesto = self.pipeheatgoesto.transpose().ravel().reshape(len(self.pipeheatgoesto.ravel()),1) * np.ones((1, len(self.timesFMM) - 1))
 			# Delete everything smaller than LimitNPSpacingTime
 			# 
 			self.indicestoneglect = np.where((self.maxtimeindexmatrix.transpose()).ravel() < self.LimitNPSpacingTime)[0]
@@ -1713,20 +1646,20 @@ class ULoopSBT(BaseReservoir):
 			self.allindices2 = self.allindices.copy()
 			#pdb.set_trace()
 			self.allindices2[self.indicesFoSlargerthan] = []
-			self.SoverLinearized = self.SoverLRelevant.ravel().reshape(len(self.SoverLRelevant.ravel()),1) * np.ones((1, self.counter - 1))
+			self.SoverLinearized = self.SoverLRelevant.ravel().reshape(len(self.SoverLRelevant.ravel()),1) * np.ones((1, len(self.timesFMM) - 1))
 			self.indicestotakeforpsSoverL = np.where(self.SoverLinearized.transpose().ravel()[self.allindices2] > self.LimitSoverL)[0]
 			self.overallindicestotakeforpsSoverL = self.allindices2[self.indicestotakeforpsSoverL]
 			self.remainingindices = self.allindices2.copy() 
 
 			self.remainingindices=np.delete(self.remainingindices,self.indicestotakeforpsSoverL)
 
-			self.NPOP = np.zeros((self.N * int(self.lastneighbourtoconsider[self.counter]), self.counter - 1))
+			self.NPOP = np.zeros((self.N * int(self.lastneighbourtoconsider[self.counter]), len(self.timesFMM) - 1))
 
 			# Use point source model when FoS is very large
 			if len(self.indicestotakeforpsFoS) > 0:
-				self.deltatlinear1 = np.ones(self.N * int(self.lastneighbourtoconsider[self.counter]), 1) * (self.times_arr[self.counter] - self.times_arr[1:self.counter-1]) * 3600
+				self.deltatlinear1 = np.ones(self.N * int(self.lastneighbourtoconsider[self.counter]), 1) * (self.times_arr[self.counter] - self.timesFMM[1:]) * self.Deltat
 				self.deltatlinear1 = deltatlinear1.ravel()[self.indicestotakeforpsFoS]
-				self.deltatlinear2 = np.ones((self.N * int(self.lastneighbourtoconsider[self.counter]), 1)) * (self.times_arr[self.counter] - self.times_arr[0:self.counter-2]) * 3600
+				self.deltatlinear2 = np.ones((self.N * int(self.lastneighbourtoconsider[self.counter]), 1)) * (self.times_arr[self.counter] - self.timesFMM[0:-1]) * self.Deltat
 				self.deltatlinear2 = self.deltatlinear2[self.indicestotakeforpsFoS]
 				self.deltazlinear = self.pipeheatcomesfrom[self.indicestotakeforpsFoS]
 				self.SMatrixlinear = self.SMatrixRelevant.flatten(order='F')
@@ -1737,9 +1670,9 @@ class ULoopSBT(BaseReservoir):
 
 			# Use point source model when SoverL is very large
 			if len(self.overallindicestotakeforpsSoverL) > 0:
-				self.deltatlinear1 = np.ones((self.N * int(self.lastneighbourtoconsider[self.counter]), 1)) * ((self.times_arr[self.counter] - self.times_arr[1:self.counter-2]) * 3600).ravel()
+				self.deltatlinear1 = np.ones((self.N * int(self.lastneighbourtoconsider[self.counter]), 1)) * ((self.times_arr[self.counter] - self.timesFMM[1:]) * self.Deltat).ravel()
 				self.deltatlinear1 = self.deltatlinear1[self.overallindicestotakeforpsSoverL]
-				self.deltatlinear2 = np.ones((self.N * int(self.lastneighbourtoconsider[self.counter]), 1)) * ((self.times_arr[self.counter] - self.times_arr[0:self.counter-2]) * 3600).ravel()
+				self.deltatlinear2 = np.ones((self.N * int(self.lastneighbourtoconsider[self.counter]), 1)) * ((self.times_arr[self.counter] - self.timesFMM[0:-1]) * self.Deltat).ravel()
 				self.deltatlinear2 = self.deltatlinear2[self.overallindicestotakeforpsSoverL]
 				self.deltazlinear = self.pipeheatcomesfrom[self.overallindicestotakeforpsSoverL]
 				self.SMatrixlinear = self.SMatrixRelevant.flatten(order='F')
@@ -1751,9 +1684,9 @@ class ULoopSBT(BaseReservoir):
 			# Use finite line source model for remaining pipe segments
 			if len(self.remainingindices) > 0:
 
-				self.deltatlinear1 = np.ones((self.N * int(self.lastneighbourtoconsider[self.counter]), 1)) * (self.times_arr[self.counter] - self.times_arr[1:self.counter]) * 3600
+				self.deltatlinear1 = np.ones((self.N * int(self.lastneighbourtoconsider[self.counter]), 1)) * (self.times_arr[self.counter] - self.timesFMM[1:]) * self.Deltat
 				self.deltatlinear1 = (self.deltatlinear1.transpose()).ravel()[self.remainingindices]
-				self.deltatlinear2 = np.ones((self.N * int(self.lastneighbourtoconsider[self.counter]), 1)) * (self.times_arr[self.counter] - self.times_arr[0:self.counter-1]) * 3600
+				self.deltatlinear2 = np.ones((self.N * int(self.lastneighbourtoconsider[self.counter]), 1)) * (self.times_arr[self.counter] - self.timesFMM[0:-1]) * self.Deltat
 				self.deltatlinear2 = (self.deltatlinear2.transpose()).ravel()[self.remainingindices]
 				self.deltazlinear = (self.pipeheatcomesfrom.T).ravel()[self.remainingindices]
 				self.midpointstuff = (self.pipeheatgoesto.transpose()).ravel()[self.remainingindices]
@@ -1771,10 +1704,10 @@ class ULoopSBT(BaseReservoir):
 
 		# Put everything together and calculate BB (= impact of all previous heat pulses from old neighbouring elements on current element at current time)
 		#  
-			self.Qindicestotake = self.SortedIndicesRelevant.ravel().reshape((self.N * int(self.lastneighbourtoconsider[self.counter]), 1))*np.ones((1,self.counter-1)) + \
-							np.ones((self.N * int(self.lastneighbourtoconsider[self.counter]), 1)) * self.N * np.arange(self.counter - 1)
+			self.Qindicestotake = self.SortedIndicesRelevant.ravel().reshape((self.N * int(self.lastneighbourtoconsider[self.counter]), 1))*np.ones((1,len(self.timesFMM)-1)) + \
+							np.ones((self.N * int(self.lastneighbourtoconsider[self.counter]), 1)) * self.N * np.arange(len(self.timesFMM) - 1)
 			self.Qindicestotake = self.Qindicestotake.astype(int)
-			self.Qlinear = self.Q.T.ravel()[self.Qindicestotake]
+			self.Qlinear = self.QFMM.T.ravel()[self.Qindicestotake]
 
 			self.BBPS = self.NPOP * self.Qlinear
 			self.BBPS = np.sum(self.BBPS, axis=1)
@@ -1783,14 +1716,14 @@ class ULoopSBT(BaseReservoir):
 			self.BB = np.sum(self.BBPSMatrix, axis=1)
 
 		if self.counter > 1:
-			self.BBCPOP = np.sum(self.CPOP * self.Q[:, 1:self.counter], axis=1)
+			self.BBCPOP = np.sum(self.CPOP * self.QFMM[:, 1:], axis=1)
 		else:
 			self.BBCPOP = np.zeros(self.N)
 
 		#Populate L and R for fluid heat balance for first element (which has the injection temperature specified)
-		self.LL[0, 0] = 1 / Deltat + self.uvector[0] / self.Deltaz[0] * (self.fullyimplicit) * 2
+		self.LL[0, 0] = 1 / self.Deltat + self.uvector[0] / self.Deltaz[0] * (self.fullyimplicit) * 2
 		self.LL[0, 2] = -4 / np.pi / self.Dvector[0]**2 / self.rho_f / self.cp_f
-		self.RR[0, 0] = 1 / Deltat * self.Twprevious[0] + self.uvector[0] / self.Deltaz[0] * Tin * 2 - self.uvector[0] / self.Deltaz[0] * self.Twprevious[0] * (1 - self.fullyimplicit) * 2
+		self.RR[0, 0] = 1 / self.Deltat * self.Twprevious[0] + self.uvector[0] / self.Deltaz[0] * Tin * 2 - self.uvector[0] / self.Deltaz[0] * self.Twprevious[0] * (1 - self.fullyimplicit) * 2
 
 		#Populate L and R for rock temperature equation for first element   
 		self.LL[1, 0] = 1
@@ -1805,19 +1738,19 @@ class ULoopSBT(BaseReservoir):
 
 		for iiii in range(2, self.N+1):  
 			# Heat balance equation
-			self.LL[0+(iiii - 1) * 3,  (iiii - 1) * 3] = 1 / Deltat + self.uvector[iiii-1] / self.Deltaz[iiii-1] / 2 * (self.fullyimplicit) * 2
+			self.LL[0+(iiii - 1) * 3,  (iiii - 1) * 3] = 1 / self.Deltat + self.uvector[iiii-1] / self.Deltaz[iiii-1] / 2 * (self.fullyimplicit) * 2
 			self.LL[0+(iiii - 1) * 3, 2 + (iiii - 1) * 3] = -4 / np.pi / self.Dvector[iiii-1] ** 2 / self.rho_f / self.cp_f
 
 			if iiii == len(self.xinj):  # Upcoming pipe has first element temperature sum of all incoming water temperatures
 				for j in range(len(self.lateralendpoints)):
 					self.LL[0+ (iiii - 1) * 3, 0 + (self.lateralendpoints[j]) * 3] = -self.ulateral[j] / self.Deltaz[iiii-1] / 2 / self.lateralflowmultiplier * (self.fullyimplicit) * 2 * (self.lateral_diam/self.prd_well_diam)**2
-					self.RR[0+(iiii - 1) * 3, 0] = 1 / Deltat * self.Twprevious[iiii-1] + self.uvector[iiii-1] / self.Deltaz[iiii-1] * (
+					self.RR[0+(iiii - 1) * 3, 0] = 1 / self.Deltat * self.Twprevious[iiii-1] + self.uvector[iiii-1] / self.Deltaz[iiii-1] * (
 							-self.Twprevious[iiii-1] + (self.lateral_diam/self.prd_well_diam)**2 * np.sum(self.lateralflowallocation[j] * self.Twprevious[self.lateralendpoints[j]])) / 2 * (
 													1 - self.fullyimplicit) * 2
 			else:
 				self.LL[0+(iiii-1) * 3, 0 + (int(self.previouswaterelements[iiii-1])) * 3] = -self.uvector[iiii-1] / self.Deltaz[iiii-1] / 2 * (
 						self.fullyimplicit) * 2
-				self.RR[0+(iiii-1) * 3, 0] = 1 / Deltat * self.Twprevious[iiii-1] + self.uvector[iiii-1] / self.Deltaz[iiii-1] * (
+				self.RR[0+(iiii-1) * 3, 0] = 1 / self.Deltat * self.Twprevious[iiii-1] + self.uvector[iiii-1] / self.Deltaz[iiii-1] * (
 						-self.Twprevious[iiii-1] + self.Twprevious[int(self.previouswaterelements[iiii-1])]) / 2 * (1 - self.fullyimplicit) * 2
 
 			# Rock temperature equation
@@ -1843,6 +1776,58 @@ class ULoopSBT(BaseReservoir):
 
 		# Storing fluid temperature for the next time step
 		self.Twprevious = self.Sol.ravel()[np.arange(0,3*self.N,3)]
+
+		#FMM algorithm for combining heat pulses
+		#---------------------------------------
+		if (self.FMM == 1 and self.counter>50 and self.times_arr[self.counter]*self.Deltat > self.FMMtriggertime):
+			self.remainingtimes = self.times_arr[(self.times_arr >= self.combinedtimes[-1]) & (self.times_arr < self.times_arr[self.counter])] 
+			self.currentendtimespassed = self.times_arr[self.counter] - self.remainingtimes
+			
+			if len(self.remainingtimes)>40:
+				if self.currentendtimespassed[24]*self.Deltat>self.FMMtriggertime:
+					self.combinedtimes = np.append(self.combinedtimes,self.remainingtimes[24])
+					startindex = np.where(self.times_arr == self.combinedtimes[-2])[0][0]
+					endindex = np.where(self.times_arr == self.remainingtimes[24])[0][0]
+					newcombinedQ = np.sum(self.Q[:,startindex+1:endindex+1]*(self.times_arr[startindex+1:endindex+1]-self.times_arr[startindex:endindex])/(self.combinedtimes[-1]-self.combinedtimes[-2]),axis = 1) #weighted average
+					newcombinedQ = newcombinedQ.reshape(-1, 1)
+					self.combinedQ = np.hstack((self.combinedQ, newcombinedQ))
+			
+			#combine very old time pulses
+			startindexforsecondlevel = np.where(self.combinedtimes == self.combinedtimes2ndlevel[-1])[0][0]
+			if self.combinedtimes.size>30 and self.combinedtimes.size-startindexforsecondlevel>30:
+				if (self.times_arr[self.counter] - self.combinedtimes[startindexforsecondlevel+20])*self.Deltat>self.FMMtriggertime*5:
+					indicestodrop = np.arange(startindexforsecondlevel+1, startindexforsecondlevel+20)
+					weightedQ = np.sum(self.combinedQ[:,startindexforsecondlevel+1:startindexforsecondlevel+20+1]*\
+										(self.combinedtimes[startindexforsecondlevel+1:startindexforsecondlevel+20+1]-self.combinedtimes[startindexforsecondlevel:startindexforsecondlevel+20])\
+											/(self.combinedtimes[startindexforsecondlevel+20]-self.combinedtimes[startindexforsecondlevel]),axis = 1)
+					self.combinedtimes2ndlevel = np.append(self.combinedtimes2ndlevel,self.combinedtimes[startindexforsecondlevel+20])
+					self.combinedtimes = np.delete(self.combinedtimes, indicestodrop)
+					self.combinedQ[:,startindexforsecondlevel+20] = weightedQ
+					self.combinedQ = np.delete(self.combinedQ, indicestodrop, axis=1)
+
+
+			#combine very very old time pulses
+			startindexforthirdlevel = np.where(self.combinedtimes == self.combinedtimes3rdlevel[-1])[0][0]
+			if self.combinedtimes.size>50 and self.combinedtimes.size-startindexforthirdlevel>50:
+				if (self.times_arr[self.counter] - self.combinedtimes[startindexforthirdlevel+20])*self.Deltat>self.FMMtriggertime*10:
+					indicestodrop = np.arange(startindexforthirdlevel+1, startindexforthirdlevel+20)
+					weightedQ = np.sum(self.combinedQ[:,startindexforthirdlevel+1:startindexforthirdlevel+20+1]*\
+										(self.combinedtimes[startindexforthirdlevel+1:startindexforthirdlevel+20+1]-self.combinedtimes[startindexforthirdlevel:startindexforthirdlevel+20])\
+											/(self.combinedtimes[startindexforthirdlevel+20]-self.combinedtimes[startindexforthirdlevel]),axis = 1)
+					self.combinedtimes3rdlevel = np.append(self.combinedtimes3rdlevel,self.combinedtimes[startindexforthirdlevel+20])
+					self.combinedtimes = np.delete(self.combinedtimes, indicestodrop)
+					self.combinedQ[:,startindexforthirdlevel+20] = weightedQ
+					self.combinedQ = np.delete(self.combinedQ, indicestodrop, axis=1)
+			
+			
+			endindex = np.where(self.times_arr == self.combinedtimes[-1])[0][0]
+			remainingQ = self.Q[:,endindex+1:self.counter+1]
+			self.QFMM = np.hstack((self.combinedQ, remainingQ))
+			self.timesFMM = np.append(self.combinedtimes,self.times_arr[endindex+1:self.counter+1]) 
+			
+		else:
+			self.QFMM = self.Q[:,0:self.counter+1]
+			self.timesFMM = self.times_arr[0:self.counter+1]
 
 		##########
 		# Calculating the fluid outlet temperature at the top of the first element
@@ -1883,7 +1868,7 @@ class TabularReservoir(BaseReservoir):
 				 surface_temp,
 				 L,
 				 time_init,
-				 well_depth,
+				 well_tvd,
 				 prd_well_diam,
 				 inj_well_diam,
 				 num_prd,
@@ -1917,7 +1902,7 @@ class TabularReservoir(BaseReservoir):
 			surface_temp (float): surface temperature in deg C.
 			L (float): project lifetime in years.
 			time_init (datetime): initial time.
-			well_depth (float): well depth in meters.
+			well_tvd (float): well depth in meters.
 			prd_well_diam (float): production well diameter in meters.
 			inj_well_diam (float): injection well diameter in meters.
 			num_prd (int): number of producers.
@@ -1951,14 +1936,14 @@ class TabularReservoir(BaseReservoir):
 
 		self.df["Date"] = pd.to_datetime(self.df["Date"])
 		Tres_init = self.df.loc[0, "Tres_deg_C"]
-		geothermal_gradient = (Tres_init - surface_temp)/well_depth*1000
+		geothermal_gradient = (Tres_init - surface_temp)/well_tvd*1000
 
 		super(TabularReservoir, self).__init__(Tres_init,
 											geothermal_gradient,
 											surface_temp,
 											L,
 											time_init,
-											well_depth,
+											well_tvd,
 											prd_well_diam,
 											inj_well_diam,
 											num_prd,
@@ -1980,7 +1965,7 @@ class TabularReservoir(BaseReservoir):
            									reservoir_simulator_settings)
 
 		self.numberoflaterals = 1
-		self.well_tvd = well_depth
+		self.well_tvd = well_tvd
 		self.well_md = self.well_tvd
 		self.res_length = 2000
 		self.res_thickness = res_thickness
