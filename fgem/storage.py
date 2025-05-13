@@ -8,13 +8,13 @@ import pdb
 import matplotlib.pyplot as plt
 from pyXSteam.XSteam import XSteam
 import pickle
-from fgem.utils.utils import FastXsteam
+from .utils.utils import FastXsteam
 from datetime import timedelta, datetime
 from pathlib import Path
 parent_path = Path(__file__).parent
 
 steamTable = XSteam(XSteam.UNIT_SYSTEM_MKS)  # m/kg/sec/°C/bar/W
-from fgem.utils.utils import densitywater, viscositywater, heatcapacitywater
+from .utils.utils import densitywater, viscositywater, heatcapacitywater
 
 class CustomUnpickler(pickle.Unpickler):
 
@@ -87,7 +87,7 @@ class LiIonBattery:
 			self.energy_content = 0.0 #MWh
 			self.SOC = self.energy_content / (self.energy_capacity+1e-3) * 100 #%
 			self.first_unit_active = False
-			return 0.0, 0.0
+			return 0.0, 0.0, True
 
 		# Make sure you respect the available battery energy capacity and content when dis/charging
 		new_energy_content = self.energy_content + (p_bat_in - p_bat_out) * self.timestep.total_seconds()/3600

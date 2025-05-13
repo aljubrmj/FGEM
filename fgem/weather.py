@@ -8,7 +8,7 @@ import zarr
 from kerchunk.hdf import SingleHdf5ToZarr
 import matplotlib.pyplot as plt
 from joblib import Parallel, delayed
-from tqdm.notebook import tqdm
+from tqdm import tqdm
 import pickle
 import numpy as np
 
@@ -36,7 +36,7 @@ class Weather:
                             project_lat=None,
                             project_long=None,
                             years=None,
-                            n_jobs=5
+                            n_jobs=1
                             ):
         
         """Load and preprocess weather data.
@@ -61,9 +61,9 @@ class Weather:
         if self.sup3rcc_weather_forecast:
             print("Query weather forecasts from Sup3rCC ...")
             if self.n_jobs<= 1:
-                self.df = pd.concat([query_sup3rcc_trh(y, self.project_lat, self.project_long) for y in tqdm(self.years)])
+                self.df = pd.concat([query_sup3rcc_trh(y, self.project_lat, self.project_long) for y in self.years])
             else:
-                self.df = pd.concat(Parallel(n_jobs=self.n_jobs)(delayed(query_sup3rcc_trh)(y, self.project_lat, self.project_long) for y in tqdm(self.years)))
+                self.df = pd.concat(Parallel(n_jobs=self.n_jobs)(delayed(query_sup3rcc_trh)(y, self.project_lat, self.project_long) for y in self.years))
         else:
             self.df = pd.read_csv(filepath)
 
@@ -152,7 +152,7 @@ def download_query_sup3rcc(year,
                           data_type="trh",
                           attribute="temperature_2m",
                           country="United States",
-                          dst_dir="sup3rcc_cache"):
+                          dst_dir="data/sup3rcc_cache"):
     
     """Download and save metadata Sup3rCC forecasts within FGEM.
 

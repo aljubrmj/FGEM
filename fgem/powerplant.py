@@ -2,11 +2,20 @@ import numpy as np
 import pdb 
 import math
 import os
-from fgem.utils.utils import heatcapacitywater
+from .utils.utils import *
 import pickle
+from scipy.spatial import cKDTree
 from datetime import timedelta, datetime
+from pathlib import Path
+parent_path = Path(__file__).parent
 
-FILE_BASE_DIR = os.path.dirname(__file__)
+class CustomUnpickler(pickle.Unpickler):
+
+    def find_class(self, module, name):
+        try:
+            return super().find_class(__name__, name)
+        except AttributeError:
+            return super().find_class(module, name)
 
 class BasePowerPlant(object):
     
@@ -33,7 +42,7 @@ class BasePowerPlant(object):
         self.T_inj = Tres/2
         self.timestep = timestep
 
-    def compute_geofluid_consumption(self, T, T_amb):
+    def compute_geofluid_consumption(self, T, T_amb, m_turbine):
         """Compute geofluid consumption.
 
         Args:
@@ -45,7 +54,7 @@ class BasePowerPlant(object):
         """
         raise NotImplementedError
     
-    def compute_injection_temp(self, T, T_amb):
+    def compute_injection_temp(self, T, T_amb, m_turbine):
         """Compute injection temperature.
 
         Args:
@@ -57,7 +66,7 @@ class BasePowerPlant(object):
         """
         raise NotImplementedError
 
-    def compute_cplant(self, MaxProducedTemperature):
+    def compute_cplant(self, MaxProducedTemperature, min_cost=0):
         """Compute power plant capex.
 
         Args:
@@ -111,17 +120,23 @@ class BasePowerPlant(object):
 
         # If we are using all geofluid to charge the tank, then there is no output
         if m_turbine == 0:
-            self.T_inj = self.compute_injection_temp(self.T_mix, T_amb)
+            self.power_output_MWe = 0
+            self.power_generation_MWh = 0
+            self.T_inj = self.compute_injection_temp(self.T_mix, T_amb, m_turbine)
             return 0.0, 0.0, 0.0, 0.0, self.T_inj
         else:
-            m_wh_to_turbine = m_turbine - m_tes_out
-            self.T_mix = (m_wh_to_turbine*heatcapacitywater(T_prd_wh)*T_prd_wh + m_tes_out*heatcapacitywater(T_tes_out)*T_tes_out)/(m_wh_to_turbine*heatcapacitywater(T_prd_wh)+m_tes_out*heatcapacitywater(T_tes_out)+1e-3)
-            self.power_output_MWh_kg = self.compute_geofluid_consumption(self.T_mix, T_amb)
+            if m_tes_out>0:
+                m_wh_to_turbine = m_turbine - m_tes_out
+                self.T_mix = (m_wh_to_turbine*heatcapacitywater(T_prd_wh)*T_prd_wh + m_tes_out*heatcapacitywater(T_tes_out)*T_tes_out)/(m_wh_to_turbine*heatcapacitywater(T_prd_wh)+m_tes_out*heatcapacitywater(T_tes_out)+1e-3)
+            else:
+                self.T_mix = T_prd_wh
+                
+            self.power_output_MWh_kg = self.compute_geofluid_consumption(self.T_mix, T_amb, m_turbine)
             self.power_output_MWe = self.compute_power_output(m_turbine)
             self.power_generation_MWh = self.power_output_MWe * (self.timestep.total_seconds()/3600)
-            self.T_inj = self.compute_injection_temp(self.T_mix, T_amb)
+            self.T_inj = self.compute_injection_temp(self.T_mix, T_amb, m_turbine)
 
-class ORCPowerPlant(BasePowerPlant):
+class GEOPHIRESORCPowerPlant(BasePowerPlant):
     
     """ORC Binary power plant based on GEOPHIRES."""
     
@@ -133,9 +148,9 @@ class ORCPowerPlant(BasePowerPlant):
             Tres (float): reservoir temperature in deg C.
             cf (float): capacity factor. Defualts to 1.
         """
-        super(ORCPowerPlant, self).__init__(ppc, Tres, cf)
+        super(GEOPHIRESORCPowerPlant, self).__init__(ppc, Tres, cf)
 
-    def compute_cplant(self, MaxProducedTemperature):
+    def compute_cplant(self, MaxProducedTemperature, min_cost=0):
         """Compute power plant capex.
 
         Args:
@@ -152,10 +167,11 @@ class ORCPowerPlant(BasePowerPlant):
             CCAPP1 = C3*MaxProducedTemperature**3 + C2*MaxProducedTemperature**2 + C1*MaxProducedTemperature + C0
         else:
             CCAPP1 = 2231 - 2*(MaxProducedTemperature-150.)
-        Cplantcorrelation = CCAPP1*math.pow(self.powerplant_capacity/15.,-0.06) * 1e-6 * self.powerplant_capacity * 1e3 #$MM
+        
+        Cplantcorrelation = max(min_cost, CCAPP1*math.pow(self.powerplant_capacity/15.,-0.06)) * 1e-6 * self.powerplant_capacity * 1e3 #$MM
         return Cplantcorrelation
     
-    def compute_geofluid_consumption(self, T, T_amb):
+    def compute_geofluid_consumption(self, T, T_amb, m_turbine):
         """Compute geofluid consumption.
 
         Args:
@@ -166,7 +182,7 @@ class ORCPowerPlant(BasePowerPlant):
             float: power plant output in MWh/kg.
         """
         
-        thermal_exergy = self.compute_thermalexergy(T, T_amb)
+        self.thermal_exergy = self.compute_thermalexergy(T, T_amb)
         if (T_amb < 15.):
             C1 = 2.746E-3
             C0 = -8.3806E-2
@@ -181,13 +197,13 @@ class ORCPowerPlant(BasePowerPlant):
             Tfraction = (T_amb-15.)/10.
         etaull = C1*T + C0
         etauul = D1*T + D0
-        etau = (1-Tfraction)*etaull + Tfraction*etauul
+        self.etau = (1-Tfraction)*etaull + Tfraction*etauul
         
-        power_output_MWh_kg = max(thermal_exergy*etau/3600, 0.0) #MWh/kg
+        power_output_MWh_kg = max(self.thermal_exergy*self.etau/3600, 0.0) #MWh/kg
         
         return power_output_MWh_kg #MWh/kg
     
-    def compute_injection_temp(self, T, T_amb):
+    def compute_injection_temp(self, T, T_amb, m_turbine):
         """Compute injection temperature.
 
         Args:
@@ -218,7 +234,7 @@ class ORCPowerPlant(BasePowerPlant):
 
         return Tinj #deg C
     
-class FlashPowerPlant(BasePowerPlant):
+class GEOPHIRESFlashPowerPlant(BasePowerPlant):
     """Single Flash Binary power plant."""
     def __init__(self, ppc, Tres, cf=1.0):
         """Define attributes for the BasePowerPlant class.
@@ -229,9 +245,9 @@ class FlashPowerPlant(BasePowerPlant):
             cf (float): capacity factor. Defualts to 1.
         """
         
-        super(FlashPowerPlant, self).__init__(ppc, Tres, cf)
+        super(GEOPHIRESFlashPowerPlant, self).__init__(ppc, Tres, cf)
         
-    def compute_cplant(self, MaxProducedTemperature):
+    def compute_cplant(self, MaxProducedTemperature, min_cost=0):
         """Compute power plant capex.
 
         Args:
@@ -290,11 +306,11 @@ class FlashPowerPlant(BasePowerPlant):
         CCAPPRL = D2*MaxProducedTemperature**2 + D1*MaxProducedTemperature + D0  
         b = math.log(CCAPPRL/CCAPPLL)/math.log(PRL/PLL)
         a = CCAPPRL/PRL**b
-        Cplantcorrelation = 0.8*a*math.pow(self.powerplant_capacity,b)*self.powerplant_capacity*1000./1e6 #factor 0.75 to make double flash 25% more expansive than single flash
+        Cplantcorrelation = max(min_cost, 0.8*a*math.pow(self.powerplant_capacity,b))*self.powerplant_capacity*1000./1e6 #factor 0.75 to make double flash 25% more expansive than single flash
     
         return Cplantcorrelation
     
-    def compute_geofluid_consumption(self, T, T_amb):
+    def compute_geofluid_consumption(self, T, T_amb, m_turbine):
         """Compute geofluid consumption.
 
         Args:
@@ -305,7 +321,7 @@ class FlashPowerPlant(BasePowerPlant):
             float: power plant output in MWh/kg.
         """
 
-        thermal_exergy = self.compute_thermalexergy(T, T_amb)
+        self.thermal_exergy = self.compute_thermalexergy(T, T_amb)
         if (T_amb < 15.):
             C2 = -4.27318E-7
             C1 = 8.65629E-4
@@ -324,13 +340,13 @@ class FlashPowerPlant(BasePowerPlant):
             Tfraction = (T_amb-15.)/10.
         etaull = C2*T**2 + C1*T + C0
         etauul = D2*T**2 + D1*T + D0
-        etau = (1.-Tfraction)*etaull + Tfraction*etauul
+        self.etau = (1.-Tfraction)*etaull + Tfraction*etauul
         
-        power_output_MWh_kg = max(thermal_exergy*etau/3600, 0.0) #MWh/kg
+        power_output_MWh_kg = max(self.thermal_exergy*self.etau/3600, 0.0) #MWh/kg
     
         return power_output_MWh_kg #MWh/kg
     
-    def compute_injection_temp(self, T, T_amb):
+    def compute_injection_temp(self, T, T_amb, m_turbine):
         """Compute injection temperature.
 
         Args:
@@ -342,7 +358,6 @@ class FlashPowerPlant(BasePowerPlant):
         """
 
         """Compute the exiting (reinjection) water temperature of an ORC binary power plant."""
-        
         
         if (T_amb < 15.):
             C2 = -1.11519E-3
@@ -365,3 +380,198 @@ class FlashPowerPlant(BasePowerPlant):
         Tinj = max((1.-Tfraction)*reinjtll + Tfraction*reinjtul, 0.0)
         
         return Tinj #deg C
+
+class HighEnthalpyCLGWGPowerPlant(BasePowerPlant):
+    
+    """On/Off-Design Air-cooled ORC Binary power plant developed in Python by Aljubran et al. (2024)."""
+    
+    def __init__(self, Tres, Tamb, m_prd, num_prd, cf=1.0, high_resolution=False, k=2):
+        """Define attributes for the BasePowerPlant class.
+
+        Args:
+            ppc (float): power plant nameplate capacity in MW.
+            Tres (float): reservoir temperature in deg C.
+            m_prd (float): mass flow rate of a single producer in the project in kg/s.
+            cf (float): capacity factor. Defualts to 1.
+            high_resolution (bool): if True, a higher resolution power plant model is loaded, but it is slower
+        """
+        self.Tres_design = Tres
+        self.Tamb_design = Tamb
+        self.m_prd_design = m_prd
+        self.num_prd = num_prd
+        self.k = k 
+        self.model = CustomUnpickler(open(os.path.join(parent_path, "data/powerplants", "HighEnthalpyCLGWGPowerPlant.pkl"), 'rb')).load()
+
+        model_input = np.array([[self.Tamb_design, self.Tres_design, self.m_prd_design]])
+        model_output = self.model.predict(model_input)[0]
+
+        ppc = model_output[0] * num_prd # MWe power plant capacity for all wells
+        super(HighEnthalpyCLGWGPowerPlant, self).__init__(ppc, Tres, cf)
+
+        self.power_output_MWh_kg  =  model_output[0]/self.m_prd_design / 3600 # MWh/kg
+        self.T_inj = model_output[1] # deg C
+
+    def compute_cplant(self, MaxProducedTemperature, min_cost=0):
+        """Compute power plant capex.
+
+        Args:
+            MaxProducedTemperature (float): maximum produced geofluid temperature in deg C.
+
+        Returns:
+            float: cost of power plant in USD/kW
+        """
+        if (MaxProducedTemperature < 150.):
+            C3 = -1.458333E-3
+            C2 = 7.6875E-1 
+            C1 = -1.347917E2
+            C0 = 1.0075E4
+            CCAPP1 = C3*MaxProducedTemperature**3 + C2*MaxProducedTemperature**2 + C1*MaxProducedTemperature + C0
+        else:
+            CCAPP1 = 2231 - 2*(MaxProducedTemperature-150.)
+        Cplantcorrelation = max(min_cost, CCAPP1*math.pow(self.powerplant_capacity/15.,-0.06)) * 1e-6 * self.powerplant_capacity * 1e3 #$MM
+        return Cplantcorrelation
+    
+    def compute_geofluid_consumption(self, T, T_amb, m_turbine):
+        """Compute geofluid consumption.
+
+        Args:
+            T (float): power plant inlet temperature in deg C.
+            T_amb (float): ambient temperautre in deg C.
+
+        Returns:
+            float: power plant output in MWh/kg.
+        """
+
+        m_prd = m_turbine/self.num_prd # single well flow rate
+
+        model_input = np.array([[T_amb, T, m_prd]])
+        model_output = self.model.predict(model_input)[0]
+
+        self.power_output_MWh_kg  =  max(model_output[0] / m_prd / 3600, 0) # MWh/kg
+        if self.power_output_MWh_kg == 0:
+            self.T_inj = T
+        else:
+            self.T_inj = model_output[1] # deg C
+
+        return self.power_output_MWh_kg #MWh/kg
+    
+    def compute_injection_temp(self, T, T_amb, m_turbine):
+        """Compute injection temperature.
+
+        Args:
+            T (float): power plant inlet temperature in deg C.
+            T_amb (float): ambient temperautre in deg C.
+
+        Returns:
+            float: power plant condenser outlet temperature in deg C.
+        """
+
+        """Compute the exiting (reinjection) water temperature of an ORC binary power plant."""
+        
+        return self.T_inj #deg C
+
+class ORCPowerPlant(BasePowerPlant):
+    
+    """On/Off-Design Air-cooled ORC Binary power plant developed in Python by Aljubran et al. (2024)."""
+    
+    def __init__(self, Tres, Tamb, m_prd, num_prd=None, ppc=None, cf=1.0, k=2):
+        """Define attributes for the BasePowerPlant class.
+
+        Args:
+            Tres (float): reservoir temperature in deg C.
+            Tamb (float): ambient temperature in deg C.
+            m_prd (float): mass flow rate of a single producer in the project in kg/s.
+            num_prd (int): number of producers (Note: only used if power plant capacity 'ppc' is not provided)
+            ppc (float): power plant nameplate capacity in MW.
+            cf (float): capacity factor. Defualts to 1.
+        """
+
+        self.Tres_design = Tres
+        self.Tamb_design = Tamb
+        self.m_prd_design = m_prd
+        self.num_prd = num_prd
+        self.k = k 
+        self.model = CustomUnpickler(open(os.path.join(parent_path, "data/powerplants", "ORCPowerPlant.pkl"), 'rb')).load()
+
+        self.keys = np.array(list(self.model.keys()))
+        tree = cKDTree(self.keys)
+        distances, indices = tree.query(np.array([[self.Tamb_design, self.Tres_design, self.m_prd_design]]), k=self.k)
+        self.distances, self.indices = distances[0], indices[0]
+        if isinstance(self.distances, float):
+            self.distances, self.indices = np.array([self.distances]), np.array([self.indices])
+        self.inv_distances = 1/(self.distances + 1e-3)**2 # important choice on how much to interpolate ... more impactful when simualted data is sparse ...
+        self.inv_distances = self.inv_distances/self.inv_distances.sum()
+        self.inv_distances = self.inv_distances[:,None]
+        self.model_list = [self.model[tuple(self.keys[self.indices][i])] for i in range(self.k)]
+
+        model_input = np.array([[self.Tamb_design, self.Tres_design, self.m_prd_design]])
+        preds = np.vstack([m.predict(model_input) for m in self.model_list])
+        model_output = (preds * self.inv_distances).sum(axis=0)
+
+        if ppc is None:
+            ppc = max(model_output[0] * num_prd, 1) # MWe power plant capacity for all wells
+        super(ORCPowerPlant, self).__init__(ppc, Tres, cf)
+
+        self.power_output_MWh_kg  =  np.clip(model_output[0]/self.m_prd_design / 3600, a_min=0.0, a_max=2.5e-4)  # MWh/kg
+        self.T_inj = np.clip(model_output[1], a_min=self.Tamb_design, a_max=self.Tres_design) # deg C
+
+        if self.num_prd is None:
+            m_g = ppc / nonzero(self.power_output_MWh_kg) / 3600 #kg/s
+            self.num_prd = np.ceil(m_g / m_prd).astype(int)
+
+    def compute_cplant(self, MaxProducedTemperature, min_cost=0):
+        """Compute power plant capex.
+
+        Args:
+            MaxProducedTemperature (float): maximum produced geofluid temperature in deg C.
+
+        Returns:
+            float: cost of power plant in USD/kW
+        """
+
+        if (MaxProducedTemperature < 150.):
+            C3 = -1.458333E-3
+            C2 = 7.6875E-1 
+            C1 = -1.347917E2
+            C0 = 1.0075E4
+            CCAPP1 = C3*MaxProducedTemperature**3 + C2*MaxProducedTemperature**2 + C1*MaxProducedTemperature + C0
+        else:
+            CCAPP1 = 2231 - 2*(MaxProducedTemperature-150.)
+        Cplantcorrelation = max(min_cost, CCAPP1*math.pow(self.powerplant_capacity/15.,-0.06)) * 1e-6 * self.powerplant_capacity * 1e3 #$MM
+        return Cplantcorrelation
+    
+    def compute_geofluid_consumption(self, T, T_amb, m_turbine):
+        """Compute geofluid consumption.
+
+        Args:
+            T (float): power plant inlet temperature in deg C.
+            T_amb (float): ambient temperautre in deg C.
+
+        Returns:
+            float: power plant output in MWh/kg.
+        """
+
+        m_prd = m_turbine/self.num_prd # single well flow rate
+        model_input = np.array([[T_amb, T, m_prd]])
+        
+        preds = np.vstack([m.predict(model_input) for m in self.model_list])
+        model_output = (preds * self.inv_distances).sum(axis=0)
+        self.power_output_MWh_kg  =  np.clip(model_output[0] / m_prd / 3600, a_min=0.0, a_max=2.5e-4) # MWh/kg
+        self.T_inj = np.clip(model_output[1], a_min=T_amb, a_max=T) # deg C
+
+        return self.power_output_MWh_kg #MWh/kg
+    
+    def compute_injection_temp(self, T, T_amb, m_turbine):
+        """Compute injection temperature.
+
+        Args:
+            T (float): power plant inlet temperature in deg C.
+            T_amb (float): ambient temperautre in deg C.
+
+        Returns:
+            float: power plant condenser outlet temperature in deg C.
+        """
+
+        """Compute the exiting (reinjection) water temperature of an ORC binary power plant."""
+        
+        return self.T_inj #deg C

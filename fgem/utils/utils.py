@@ -15,7 +15,6 @@ from matplotlib.ticker import FormatStrFormatter
 from shapely.geometry.polygon import orient
 from shapely.geometry import Polygon
 from shapely.prepared import prep
-from fgem.utils.constants import *
 import geopandas as gpd
 from timezonefinder import TimezoneFinder
 from meteostat import Hourly, Stations
@@ -28,8 +27,8 @@ colors = 24*sns.color_palette()
 
 linestyles = {0: 'solid',
               1: 'dashed',
-              2: 'dotted',
-              3: 'dashdot'}
+              2: 'dashdot',
+              3: 'dotted'}
 
 
 class FastXsteam(object):
@@ -520,7 +519,7 @@ def compute_f(Rewaterprod, well_diam):
     return f
 
 def densitywater(Twater):
-    """Computationally efficient correlation for water density based on the GEOPHIRES.
+    """Computationally efficient correlation for water density based on GEOPHIRES.
 
     Args:
         Twater (Union[ndarray, float]): water temperature in deg C
@@ -579,7 +578,7 @@ def vaporpressurewater(Twater):
     
     return np.where(Twater < 100, 133.322*(10**(8.07131-1730.63/(233.426+Twater)))/1000, 
          133.322*(10**(8.14019-1810.94/(244.485 +Twater)))/1000)
-    
+
 def compute_drilling_cost(well_tvd, well_diam, lateral_length=0, numberoflaterals=1,
                           total_drilling_length=None, drilling_cost=None):
     
@@ -657,7 +656,7 @@ def latlon_tres_to_depth(df_maps, query_northing, query_easting, tres, MJth_per_
     temps = []
     for depth in all_depths:
         df_temp = df_maps[depth]
-        row = df_temp.iloc[[(np.sqrt((query_northing - df_temp["Northing"]).abs() + (query_easting - df_temp["Easting"]).abs())).argmin()]]
+        row = df_temp.iloc[[(np.sqrt((query_northing - df_temp["Northing"])**2+ (query_easting - df_temp["Easting"])**2)).argmin()]]
         temp = row["T"].values[0]
         temps.append(temp)
         if temp >= tres:
@@ -832,6 +831,25 @@ def retrieve_weather(lat, lon, year, station_idx_limit=10):
     
     return data
 
+class FaissKNeighbors:
+    def __init__(self, k=5):
+        self.index = None
+        self.y = None
+        self.k = k
+
+    def fit(self, X, y):
+        self.index = faiss.IndexFlatL2(X.shape[1])
+        self.index.add(X.astype(np.float32))
+        self.y = y
+
+    def predict(self, X):
+        
+        distances, indices = self.index.search(X.astype(np.float32), k=self.k)
+        inv_distances = 1/(distances + 1e-3)**4
+        inv_distances = inv_distances/inv_distances.sum(axis=1, keepdims=True)
+        predictions = (inv_distances[:,:,None] * self.y[indices]).sum(axis=1)
+
+        return predictions
 
 if __name__ == "__main__":
     pass
