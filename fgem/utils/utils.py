@@ -236,6 +236,7 @@ def plot_cols(dfs,
               use_linestyles=True,
               blackout_first=False,
               formattime = False,
+              grid=True,
               dpi=100):
     """Visualize columns of a dataframe.
 
@@ -277,6 +278,12 @@ def plot_cols(dfs,
                     counter += 1
                 if legend_loc:
                     axes[i].legend(q, loc=legend_loc)
+            
+            axes[i].yaxis.tick_right()
+
+            if grid:
+                axes[i].grid(color='lightgray')
+
         if not color_per_col:
             counter += 1
         else:
@@ -536,13 +543,13 @@ def viscositywater(Twater):
     """Computationally efficient correlation for water viscosity based on the GEOPHIRES.
 
     Args:
-        Twater (Union[ndarray, float]): water temperature in deg C
+        Twater (Union[ndarray, float]): water temperature in [deg C]
 
     Returns:
-        Union[ndarray, float]: water viscosity in m2/s
+        Union[ndarray, float]: water dynamic viscosity in [Ns/m2] or [Pa . s]
     """
 
-    muwater = 2.414E-5*np.power(10,247.8/(Twater+273.15-140))     #accurate to within 2.5% from 0 to 370 degrees C [Ns/m2]
+    muwater = 2.414E-5*np.power(10,247.8/(Twater+273.15-140))     #accurate to within 2.5% from 0 to 370 degrees C [Ns/m2] or [Pa . s]
     return muwater
 
 def heatcapacitywater(Twater):
@@ -585,7 +592,7 @@ def compute_drilling_cost(well_tvd, well_diam, lateral_length=0, numberoflateral
     """Correlations for computing drilling costs."""
     well_md = well_tvd + lateral_length * numberoflaterals
 
-    if total_drilling_length:
+    if total_drilling_length is not None:
         if not drilling_cost:
             raise ValueError('You must specify drilling drilling_cost for the provided system design.')
         else:

@@ -119,6 +119,7 @@ class BasePowerPlant(object):
         """
 
         # If we are using all geofluid to charge the tank, then there is no output
+
         if m_turbine == 0:
             self.power_output_MWe = 0
             self.power_generation_MWh = 0
@@ -130,7 +131,7 @@ class BasePowerPlant(object):
                 self.T_mix = (m_wh_to_turbine*heatcapacitywater(T_prd_wh)*T_prd_wh + m_tes_out*heatcapacitywater(T_tes_out)*T_tes_out)/(m_wh_to_turbine*heatcapacitywater(T_prd_wh)+m_tes_out*heatcapacitywater(T_tes_out)+1e-3)
             else:
                 self.T_mix = T_prd_wh
-                
+            
             self.power_output_MWh_kg = self.compute_geofluid_consumption(self.T_mix, T_amb, m_turbine)
             self.power_output_MWe = self.compute_power_output(m_turbine)
             self.power_generation_MWh = self.power_output_MWe * (self.timestep.total_seconds()/3600)
@@ -474,7 +475,7 @@ class ORCPowerPlant(BasePowerPlant):
     
     """On/Off-Design Air-cooled ORC Binary power plant developed in Python by Aljubran et al. (2024)."""
     
-    def __init__(self, Tres, Tamb, m_prd, num_prd=None, ppc=None, cf=1.0, k=2):
+    def __init__(self, Tres, Tamb, m_prd, m_prd_design, num_prd=None, ppc=None, cf=1.0, k=2):
         """Define attributes for the BasePowerPlant class.
 
         Args:
@@ -488,7 +489,8 @@ class ORCPowerPlant(BasePowerPlant):
 
         self.Tres_design = Tres
         self.Tamb_design = Tamb
-        self.m_prd_design = m_prd
+        self.m_prd_total_init = m_prd.mean() * num_prd if isinstance(m_prd, np.ndarray) else m_prd * num_prd 
+        self.m_prd_design = m_prd_design
         self.num_prd = num_prd
         self.k = k 
         self.model = CustomUnpickler(open(os.path.join(parent_path, "data/powerplants", "ORCPowerPlant.pkl"), 'rb')).load()
@@ -507,13 +509,12 @@ class ORCPowerPlant(BasePowerPlant):
         model_input = np.array([[self.Tamb_design, self.Tres_design, self.m_prd_design]])
         preds = np.vstack([m.predict(model_input) for m in self.model_list])
         model_output = (preds * self.inv_distances).sum(axis=0)
+        self.power_output_MWh_kg  =  np.clip(model_output[0] / self.m_prd_design / 3600, a_min=0.0, a_max=2.5e-4) # MWh/kg
+        self.T_inj = np.clip(model_output[1], a_min=self.Tamb_design, a_max=self.Tres_design) # deg C
 
         if ppc is None:
-            ppc = max(model_output[0] * num_prd, 1) # MWe power plant capacity for all wells
+            ppc = max(self.power_output_MWh_kg * self.m_prd_total_init * 3600, 0.1) # MWe power plant capacity for all wells
         super(ORCPowerPlant, self).__init__(ppc, Tres, cf)
-
-        self.power_output_MWh_kg  =  np.clip(model_output[0]/self.m_prd_design / 3600, a_min=0.0, a_max=2.5e-4)  # MWh/kg
-        self.T_inj = np.clip(model_output[1], a_min=self.Tamb_design, a_max=self.Tres_design) # deg C
 
         if self.num_prd is None:
             m_g = ppc / nonzero(self.power_output_MWh_kg) / 3600 #kg/s
@@ -551,12 +552,13 @@ class ORCPowerPlant(BasePowerPlant):
             float: power plant output in MWh/kg.
         """
 
-        m_prd = m_turbine/self.num_prd # single well flow rate
-        model_input = np.array([[T_amb, T, m_prd]])
+        # m_prd = m_turbine/self.num_prd # single well flow rate
+        self.m_prd_norm = self.m_prd_design * m_turbine/self.m_prd_total_init
+        model_input = np.array([[T_amb, T, self.m_prd_norm]])
         
         preds = np.vstack([m.predict(model_input) for m in self.model_list])
         model_output = (preds * self.inv_distances).sum(axis=0)
-        self.power_output_MWh_kg  =  np.clip(model_output[0] / m_prd / 3600, a_min=0.0, a_max=2.5e-4) # MWh/kg
+        self.power_output_MWh_kg  =  np.clip(model_output[0] / self.m_prd_norm / 3600, a_min=0.0, a_max=2.5e-4) # MWh/kg
         self.T_inj = np.clip(model_output[1], a_min=T_amb, a_max=T) # deg C
 
         return self.power_output_MWh_kg #MWh/kg
