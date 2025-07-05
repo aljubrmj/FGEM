@@ -147,8 +147,8 @@ def query_sup3rcc_trh(year, lat, long, dst_dir="data/sup3rcc_cache"):
     return df
 
 def download_query_sup3rcc(year,
-                          lat, 
-                          long, 
+                          lat,
+                          long,
                           data_type="trh",
                           attribute="temperature_2m",
                           country="United States",

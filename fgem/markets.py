@@ -21,6 +21,7 @@ class TabularPowerMarket:
                             L=30,
                             time_init=pd.to_datetime('today'),
                             resample=None,
+                            oversample_first_day=None,
                             fat_factor=1,
                             fat_window=24,
                                 ):
@@ -53,7 +54,18 @@ class TabularPowerMarket:
         if resample:
             self.resample = resample
             self.df = self.df.resample(rule=resample, on='Date').mean()
-        
+
+        # feature added specifically for closed loop systems to capture ealy transient
+        if oversample_first_day:
+            mask = self.df.index <= time_init + timedelta(days=1)
+            if mask.sum() > 0:
+                df_initial = self.df[mask].reset_index().resample(rule=oversample_first_day, on='Date').mean().ffill()
+                df_later = self.df[~mask]
+            else:
+                df_initial = self.df.iloc[[0,1]].reset_index().resample(rule=oversample_first_day, on='Date').mean().ffill()
+                df_later = self.df.iloc[2:]
+            self.df = pd.concat([df_initial, df_later], axis=0)
+
         self.df.reset_index(inplace=True)
         self.df['TimeDiff'] = self.df.Date.diff().bfill()
         self.df['TimeDiff_seconds'] = self.df.TimeDiff.apply(lambda x: x.total_seconds())
@@ -119,7 +131,7 @@ class TabularPowerMarket:
             self.df["capacity_price"] = capacity_price
             if convert_to_usd_per_mwh:
                 self.df["capacity_price"] = self.df["capacity_price"] * 1e3 / 8760
-
+        
     def get_market_price(self,
                          t,
                          col):
