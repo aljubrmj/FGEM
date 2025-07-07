@@ -46,7 +46,7 @@ class TabularPowerMarket:
                 print("Slow formating of datetime while loading of wholesale market data ... ")
                 self.df.Date = pd.to_datetime(self.df.Date)
         else:
-            self.df = time_init + pd.DataFrame(np.cumsum(L * 8760 * [timedelta(hours=1)]), columns=["Date"])
+            self.df = pd.DataFrame(pd.date_range(start=time_init, end=time_init + pd.DateOffset(years = L) - pd.DateOffset(hours = 1), freq='h'), columns=["Date"])
             # self.df.set_index("Date", inplace=True)
             self.df["price"] = energy_price
             self.df["recs_price"] = 30
