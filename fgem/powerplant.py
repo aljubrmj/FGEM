@@ -3,6 +3,7 @@ import pdb
 import math
 import os
 from .utils.utils import *
+from .utils.constants import *
 import pickle
 from scipy.spatial import cKDTree
 from datetime import timedelta, datetime
@@ -128,7 +129,7 @@ class BasePowerPlant(object):
         else:
             if m_tes_out>0:
                 m_wh_to_turbine = m_turbine - m_tes_out
-                self.T_mix = (m_wh_to_turbine*heatcapacitywater(T_prd_wh)*T_prd_wh + m_tes_out*heatcapacitywater(T_tes_out)*T_tes_out)/(m_wh_to_turbine*heatcapacitywater(T_prd_wh)+m_tes_out*heatcapacitywater(T_tes_out)+1e-3)
+                self.T_mix = (m_wh_to_turbine*heatcapacitywater(T_prd_wh)*T_prd_wh + m_tes_out*heatcapacitywater(T_tes_out)*T_tes_out)/nonzero(m_wh_to_turbine*heatcapacitywater(T_prd_wh)+m_tes_out*heatcapacitywater(T_tes_out))
             else:
                 self.T_mix = T_prd_wh
             
@@ -489,7 +490,6 @@ class ORCPowerPlant(BasePowerPlant):
 
         self.Tres_design = Tres
         self.Tamb_design = Tamb
-        self.m_prd_total_init = m_prd.mean() * num_prd if isinstance(m_prd, np.ndarray) else m_prd * num_prd 
         self.m_prd_design = m_prd_design
         self.num_prd = num_prd
         self.k = k 
@@ -513,13 +513,20 @@ class ORCPowerPlant(BasePowerPlant):
         self.T_inj = np.clip(model_output[1], a_min=self.Tamb_design, a_max=self.Tres_design) # deg C
 
         if ppc is None:
+            self.m_prd_total_init = m_prd.mean() * self.num_prd if isinstance(m_prd, np.ndarray) else m_prd * self.num_prd 
             ppc = max(self.power_output_MWh_kg * self.m_prd_total_init * 3600, 0.1) # MWe power plant capacity for all wells
-        super(ORCPowerPlant, self).__init__(ppc, Tres, cf)
+        
 
-        if self.num_prd is None:
+        elif self.num_prd is None:
             m_g = ppc / nonzero(self.power_output_MWh_kg) / 3600 #kg/s
             self.num_prd = np.ceil(m_g / m_prd).astype(int)
+            self.m_prd_total_init = m_g
+        
+        else:
+            self.m_prd_total_init = m_prd.mean() * self.num_prd if isinstance(m_prd, np.ndarray) else m_prd * self.num_prd 
 
+        super(ORCPowerPlant, self).__init__(ppc, Tres, cf)
+        
     def compute_cplant(self, MaxProducedTemperature, min_cost=0):
         """Compute power plant capex.
 
@@ -558,7 +565,7 @@ class ORCPowerPlant(BasePowerPlant):
         
         preds = np.vstack([m.predict(model_input) for m in self.model_list])
         model_output = (preds * self.inv_distances).sum(axis=0)
-        self.power_output_MWh_kg  =  np.clip(model_output[0] / self.m_prd_norm / 3600, a_min=0.0, a_max=2.5e-4) # MWh/kg
+        self.power_output_MWh_kg  =  np.clip(model_output[0] / nonzero(self.m_prd_norm) / 3600, a_min=0.0, a_max=2.5e-4) # MWh/kg
         self.T_inj = np.clip(model_output[1], a_min=T_amb, a_max=T) # deg C
 
         return self.power_output_MWh_kg #MWh/kg

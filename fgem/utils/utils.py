@@ -311,8 +311,6 @@ def plot_cols(dfs,
         axes[0].legend(list(dfs.keys()), loc='upper right', fontsize=10)
     if blackout_first:
         axes[0].plot(df_plot.index, df_plot[quantities[0]], color='black')
-    
-    plt.show()
 
     return fig
 

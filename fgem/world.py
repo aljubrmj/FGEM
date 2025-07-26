@@ -60,7 +60,7 @@ class World:
         self.time_init = pd.to_datetime(self.time_init) if self.time_init else pd.to_datetime('today')
         self.start_year = self.time_init.year
         self.end_year = self.start_year + self.L
-        self.num_inj = max(int(np.floor(self.inj_prd_ratio * self.num_prd)), 1) # underestimate the need for injectors since devlopers would often prefer to drill more later if needed
+        self.num_inj = max(int(np.floor(self.inj_prd_ratio * self.num_prd)), 1) if self.num_prd else None # underestimate the need for injectors since devlopers would often prefer to drill more later if needed
         self.turbine_power_output_MWe = 0
         self.turbine_power_generation_MWh = 0
         self.m_market = 0
@@ -77,6 +77,8 @@ class World:
         self.pp_type_thresh = 175 # if reservoir temperature is greater, then use a flash power plant
         self.half_lateral_length = self.lateral_length/2
         self.Tres_init = self.surface_temp + self.geothermal_gradient/1000 * self.well_tvd
+        self.auto_redrill = True if self.redrill_ratio else False
+        self.auto_shutoff = True if self.shutoff_ratio else False
 
         if not hasattr(self, "powerplant_type"):
             self.powerplant_type = "Binary"
@@ -96,7 +98,7 @@ class World:
             loc = [easting, northing]
             A = cKDTree(self.df_trans[["Easting", "Northing"]].values)
             distances, indices = A.query(loc, k=5, workers=4, p=2)
-            inv_distances = 1/(distances + SMALLER_NUM)
+            inv_distances = 1/nonzero(distances)
             inv_distances = inv_distances/inv_distances.sum()
             y_interp = (inv_distances * self.df_trans["interconnection_usd_kw"].values[indices]).sum()
             self.powerplant_interconnection_cost = y_interp
@@ -119,8 +121,8 @@ class World:
         """One function to step, update, and record the project in one go.
 
         Args:
-            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s. Defaults to 80.
-            m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s. Defaults to None.
+            m_prd (Union[ndarray,list,float], optional): producer mass flow rates in kg/s. Defaults to 80.
+            m_inj (Union[ndarray,list,float], optional): injector mass flow rates in kg/s. Defaults to None.
             m_tes_in (float, optional): mass flow into thermal energy storage tank in kg/s. Defaults to 0.
             m_tes_out (float, optional): mass flow out of thermal energy storage tank in kg/s. Defaults to 0.
             p_bat_ppin (float, optional): power rate at which battery is charged directly from the geothermal power plant in MW. Defaults to 0.
@@ -131,7 +133,24 @@ class World:
         """
 
         if self.reservoir_filename:
-            m_prd = self.reservoir.df.loc[(self.reservoir.df["Date"] - self.time_curr).abs().argmin() , "m_kg_per_sec"]/self.num_prd
+            m_prd, m_inj = np.zeros(self.num_res), np.zeros(self.num_res)
+            for i, reservoir in enumerate(self.reservoirs):
+                reservoir_time_passed_seconds = (reservoir.time_curr - reservoir.time_init).total_seconds()
+                m_prd[i] = float(reservoir.m_prd_interpolator(reservoir_time_passed_seconds))
+                m_inj[i] = float(reservoir.m_inj_interpolator(reservoir_time_passed_seconds))
+
+        elif m_prd is None:
+            m_prd = self.m_prd * np.ones(self.num_res)
+            m_inj = self.m_inj * np.ones(self.num_res)
+
+        else:
+            if isinstance(m_prd, list):
+                assert len(m_inj) == len(m_prd) == self.num_res, f'You should pass exactly {self.num_res} values for production mass flow rate.'
+                m_prd = np.array(m_prd)
+                m_inj = np.array(m_inj)
+            else:
+                m_prd = m_prd * np.ones(self.num_res)
+                m_inj = m_inj * np.ones(self.num_res)
 
         self.update_state(m_prd, m_inj, T_inj, T_amb, 
                           m_tes_in, m_tes_out, 
@@ -180,17 +199,17 @@ class World:
         self.p_bat_in = self.p_bat_ppin + self.p_bat_gridin
         self.p_bat_out = p_bat_out
 
-        if m_prd is not None:
-            self.m_prd = m_prd if isinstance(m_prd, np.ndarray) else np.array(self.num_prd * [m_prd])
-        else:
-            self.m_prd = self.m_prd if isinstance(self.m_prd, np.ndarray) else np.array(self.num_prd * [self.m_prd])
-        
-        self.m_g = self.m_prd.sum()
-
-        if m_inj is not None:
-            self.m_inj = m_inj if isinstance(m_inj, np.ndarray) else np.array(self.num_inj * [m_inj])
-        else:
-            self.m_inj = np.array(self.num_inj * [self.m_g/self.num_inj])
+        # self.T_prd_wh = self.reservoir.T_prd_wh.mean() # add small number 0.1 to m_prd to account for the case where all wells are shut-off
+        self.m_prd = m_prd
+        self.m_inj = m_inj
+        self.res_shutoffs = np.array([r.shutoff for r in self.reservoirs])
+        self.res_bh_temps = np.array([r.Tres for r in self.reservoirs])
+        self.res_wh_temps = np.array([r.T_prd_wh for r in self.reservoirs])
+        self.C_res = heatcapacitywater(self.res_wh_temps)
+        self.res_total_prd = self.m_prd * self.num_res_prd * (1-self.res_shutoffs)
+        self.res_total_inj = self.m_inj * self.num_res_inj * (1-self.res_shutoffs)
+        self.T_prd_wh = (self.res_total_prd*self.C_res*self.res_wh_temps).sum()/nonzero((self.res_total_prd*self.C_res).sum())
+        self.m_g = self.res_total_prd.sum()
 
         self.m_bypass = m_bypass
         self.m_excess = 0
@@ -201,7 +220,6 @@ class World:
         self.capacity_price = self.state["capacity_price"]
         self.recs_price = self.state["recs_price"]
         self.battery_elcc = self.state["battery_elcc"] if self.battery else 0.0
-        self.T_prd_wh = self.reservoir.T_prd_wh.mean() # add small number 0.1 to m_prd to account for the case where all wells are shut-off
         self.turbine_power_output_MWe = self.powerplant.power_output_MWe
         self.turbine_power_generation_MWh = self.powerplant.power_generation_MWh
         self.T_inj = T_inj if T_inj else self.powerplant.T_inj
@@ -226,7 +244,7 @@ class World:
             self.m_battery = min(self.p_bat_ppin / nonzero(self.power_output_MWh_kg) / 3600, self.m_turbine) if (self.num_prd > 0) else 0.0
             self.battery_power_output_MWe = self.battery.battery_roundtrip_eff * self.p_bat_out
             self.battery_power_generation_MWh = self.battery_power_output_MWe * self.timestep_hrs
-            self.m_market = min((self.powerplant_capacity - self.p_bat_ppin) / nonzero(self.power_output_MWh_kg) / 3600,
+            self.m_market = min((self.powerplant.powerplant_capacity - self.p_bat_ppin) / nonzero(self.power_output_MWh_kg) / 3600,
                                 self.m_turbine - self.m_battery) #kg/s
             
         if self.num_prd > 0:
@@ -243,7 +261,7 @@ class World:
                     self.m_excess = 0.0
             
             # Calculate powerplant outputs
-            self.powerplant.step(m_turbine=self.m_market, 
+            self.powerplant.step(m_turbine=self.m_market,
                                  T_prd_wh=self.T_prd_wh,
                                  T_amb=self.T_amb,
                                  m_tes_out=self.m_tes_out,
@@ -251,23 +269,74 @@ class World:
 
             # Correct injection temperauture if you are bypassing:
             if self.bypass and (self.m_bypass > 0):
-                self.T_inj = (self.m_turbine * self.T_inj + self.m_bypass * self.T_prd_wh)/(self.m_turbine + self.m_bypass)
+                self.T_inj = (self.m_turbine * self.T_inj + self.m_bypass * self.T_prd_wh)/nonzero(self.m_turbine + self.m_bypass)
             
             # Step reservoir
-            self.reservoir.step(m_prd=self.m_prd, 
-                                m_inj=self.m_inj,
-                                T_inj=self.T_inj,
-                                T_amb=self.T_amb)
+            for i, reservoir in enumerate(self.reservoirs):
+                reservoir.step(m_prd=self.m_prd[i], 
+                               m_inj=self.m_inj[i],
+                               T_inj=self.T_inj,
+                               T_amb=self.T_amb)
+                if self.auto_shutoff:
+                    if self.shutoff_ratio >= reservoir.Tres / reservoir.Tres_init:
+                        self.shutoff_wells(reservoir)
+
+            if self.auto_redrill:
+                # time_passed_years = (self.time_curr - self.time_init).total_seconds()/8760/3600
+                # reservoir_time_passed_years = (self.reservoir[-1].time_curr - self.reservoir.time_init).total_seconds()/8760/3600
+                if (self.redrill_ratio >= self.powerplant.power_output_MWe / self.powerplant.powerplant_capacity):# & (time_passed_years<self.L-3):
+                    self.shutoff_wells(self.reservoirs[-1])
+                    self.redrill()
+
+    def shutoff_wells(self, reservoir, num_prd=None, num_inj=None):
+        if not reservoir.shutoff:
+            num_prd = min(reservoir.num_prd if num_prd is None else num_prd, reservoir.num_prd)
+            num_inj = min(reservoir.num_inj if num_inj is None else num_inj, reservoir.num_inj)
+            reservoir.num_prd -= num_prd
+            reservoir.num_inj -= num_inj
+            self.num_prd_shutoff[self.time_curr.year - self.time_init.year] -= num_prd
+            self.num_inj_shutoff[self.time_curr.year - self.time_init.year] -= num_inj
+            self.num_res_prd = np.array([r.num_prd for r in self.reservoirs])
+            self.num_res_inj = np.array([r.num_inj for r in self.reservoirs])
+
+        if reservoir.num_prd == 0:
+            reservoir.shutoff = True
+
+    def redrill(self, num_prd=None, num_inj=None):
+        num_prd = self.num_prd if num_prd is None else num_prd
+        num_inj = self.num_inj if num_inj is None else num_inj
+
+        new_reservoir = self.create_reservoir(num_prd, num_inj, self.time_curr)
+        # new_reservoir.time_init = self.time_curr
+        len_history = len(self.reservoirs[0].m_prd_arr)
+        new_reservoir.time_passed_arr = len_history * [0.0]
+        new_reservoir.m_prd_arr = len_history * [0.0]
+        new_reservoir.m_inj_arr = len_history * [0.0]
+        new_reservoir.T_prd_wh_arr = len_history * [np.nan]
+        new_reservoir.T_res_arr = len_history * [np.nan]
+        new_reservoir.T_inj_arr = len_history * [np.nan]
+        new_reservoir.num_prd_arr = len_history * [0.0]
+        new_reservoir.num_inj_arr = len_history * [0.0]
+        new_reservoir.shutoff_arr = len_history * [True]
+        self.reservoirs.append(new_reservoir)
+        self.num_prd_drilled[self.time_curr.year - self.time_init.year] += new_reservoir.num_prd
+        self.num_inj_drilled[self.time_curr.year - self.time_init.year] += new_reservoir.num_inj
+
+        self.num_res = len(self.reservoirs)
+        self.num_res_prd = np.array([r.num_prd for r in self.reservoirs])
+        self.num_res_inj = np.array([r.num_inj for r in self.reservoirs])
 
     def record_step(self):
         """Recording information about the most recent information in the project.
         """
 
         # Absolute geothermal capacity potential for capacity revenue calculation
-        self.effective_ppc= self.powerplant_capacity #self.powerplant.compute_power_output(self.m_g)
+        self.effective_ppc= self.powerplant.powerplant_capacity #self.powerplant.compute_power_output(self.m_g)
         self.turbine_power_output_MWe = self.powerplant.power_output_MWe
         self.turbine_power_generation_MWh = self.powerplant.power_generation_MWh
 
+        self.records["Time Passed"].append((self.time_curr - self.time_init).total_seconds())
+        # self.records["Reservoir Time Passed"].append((self.reservoir.time_curr - self.reservoir.time_init).total_seconds())
         self.records["World Time"].append(self.time_curr)
         self.records["Year"].append(self.time_curr.year)
         self.records["Month"].append(self.time_curr.month)
@@ -276,7 +345,7 @@ class World:
         self.records["Minute"].append(self.time_curr.minute)
         self.records["DayOfYear"].append(self.time_curr.dayofyear)
         self.records["Specific Power Output [kWh/kg]"].append(self.powerplant.power_output_MWh_kg*1e3)
-        self.records["Installed Power Plant Capacity [MWe]"].append(self.powerplant_capacity)
+        self.records["Installed Power Plant Capacity [MWe]"].append(self.powerplant.powerplant_capacity)
         self.records["Turbine Output [MWe]"].append(self.turbine_power_output_MWe)
         self.records["Battery Output [MWe]"].append(self.battery_power_output_MWe)
         self.records["Atm Temp [deg C]"].append(self.T_amb)
@@ -288,8 +357,8 @@ class World:
         self.records["M_Market [kg/s]"].append(self.m_market)
         self.records["M_Battery [kg/s]"].append(self.m_battery)
         self.records["M_Turbine [kg/s]"].append(self.m_turbine)
-        self.records["M_Produced [kg/s]"].append(self.m_prd.sum())
-        self.records["M_Injected [kg/s]"].append(self.m_inj.sum())
+        self.records["M_Produced [kg/s]"].append(self.res_total_prd.sum())
+        self.records["M_Injected [kg/s]"].append(self.res_total_inj.sum())
         self.records["Battery Power Capacity [MWe]"].append(0.0)
         self.records["Battery ELCC"].append(self.battery_elcc)
         self.records["Bat Charge From PP [MWe]"].append(self.p_bat_ppin)
@@ -298,10 +367,10 @@ class World:
         self.records["Bat Discharge [MWe]"].append(self.battery_roundtrip_eff * self.p_bat_out)
 
         if self.num_prd > 0:
-            self.records["Res Temp [deg C]"].append(self.reservoir.Tres)
+            self.records["Res Temp [deg C]"].append(self.res_bh_temps.mean())
             self.records["WH Temp [deg C]"].append(self.T_prd_wh)
             self.records["Inj Temp [deg C]"].append(self.T_inj)
-            self.records["Field Production [kg]"].append(self.m_prd.sum() * self.timestep.total_seconds())
+            self.records["Field Production [kg]"].append(self.m_g * self.timestep.total_seconds())
         if self.st:
             self.records["TES M_in [kg/s]"].append(self.m_tes_in)
             self.records["TES M_out [kg/s]"].append(self.m_tes_out)
@@ -316,172 +385,181 @@ class World:
             self.records["Battery Power Capacity [MWe]"][-1] = self.battery.power_capacity
 
     def compute_pumping(self):
-        self.well_tvd = self.reservoir.well_tvd
-        self.well_md = self.reservoir.well_md
-        m_prd = self.df_records["M_Produced [kg/s]"].values/self.num_prd
-        m_inj = self.df_records["M_Injected [kg/s]"].values/self.num_inj
-        T_inj = self.df_records['Inj Temp [deg C]'].values
+        self.res_PumpingPowerInj = []
+        self.res_PumpingPowerProd = []
+        self.res_PumpingPower_ideal = []
+        self.res_WHP_Prod = []
 
-        if "uloop" in self.reservoir_type.lower():
-            T_inj = T_inj[:,None]
-            diam = 2*self.reservoir.radiusvector[None]
-            m = m_inj[:,None]
-            dL = self.reservoir.dL[None]
-            dz = self.reservoir.dz[None]
-            T = self.reservoir.TwMatrix[:len(m)]
+        for reservoir in self.reservoirs:
+            self.well_tvd = reservoir.well_tvd
+            self.well_md = reservoir.well_md
+            m_prd = np.array(reservoir.m_prd_arr)
+            m_inj = np.array(reservoir.m_inj_arr)
+            T_prd_wh = np.array(reservoir.T_prd_wh_arr) 
+            Tres = np.array(reservoir.T_res_arr) 
+            T_inj = np.array(reservoir.T_inj_arr)
+            num_prd = np.array(reservoir.num_prd_arr)
+            num_inj = np.array(reservoir.num_inj_arr)
 
-            rho = densitywater(T)
-            mu = viscositywater(T)
+            if self.reservoir_filename:
+                time_passed_seconds = reservoir.time_passed_arr
+                shutoff_arr = np.array(reservoir.shutoff_arr)
+                self.WHP_Prod = reservoir.WHP_prd_interpolator(time_passed_seconds) * (1-shutoff_arr)
+                self.WHP_Inj = reservoir.WHP_inj_interpolator(time_passed_seconds) * (1-shutoff_arr)
+                self.PumpingPowerProd = reservoir.pumping_prd_interpolator(time_passed_seconds)*num_prd * (1-shutoff_arr)
+                self.PumpingPowerInj = reservoir.pumping_inj_interpolator(time_passed_seconds)*num_inj * (1-shutoff_arr)
+                self.PumpingPower_ideal = np.maximum(self.PumpingPowerInj + self.PumpingPowerProd, 0.0)
+                self.pumpdepth = np.array([0.0]) #no production pump at any depth
 
-            v = (m/self.numberoflaterals)*(1.+self.waterloss)/rho/(math.pi/4.*diam**2)
-            Re = 4.*(m/self.numberoflaterals)*(1.+self.waterloss)/(mu*math.pi*diam)
-            f = compute_f(Re, diam)
+            elif "uloop" in self.reservoir_type.lower():
+                T_inj = T_inj[:,None]
+                diam = 2*self.reservoir.radiusvector[None]
+                m = m_inj[:,None]
+                dL = reservoir.dL[None]
+                dz = reservoir.dz[None]
+                T = reservoir.TwMatrix[:len(m)]
 
-            # Necessary injection wellhead pressure [kPa]
-            self.DPSurfaceplant = 68.95
-            self.Pprodwellhead = 0.0
+                rho = densitywater(T)
+                mu = viscositywater(T)
 
-            # pressure drop in pipes in parallel is the same, so we average things out
-            self.DP_flow = f*(rho*v**2/2)*(dL/diam)/1e3
-            self.DP_flow = self.DP_flow[:,:self.reservoir.interconnections[1]+1].sum(axis=1, keepdims=True) + self.DP_flow[:,self.reservoir.interconnections[1]+1:].sum(axis=1, keepdims=True)/self.numberoflaterals
+                v = (m/reservoir.numberoflaterals)*(1.+reservoir.waterloss)/rho/(math.pi/4.*diam**2)
+                Re = 4.*(m/reservoir.numberoflaterals)*(1.+reservoir.waterloss)/(mu*math.pi*diam)
+                f = compute_f(Re, diam)
 
-            # hydrsotatic is counted once along depth, so we make sure we do not double count hydrostatic pressure build-up from different laterals
-            self.DP_hydro = rho*9.81*dz/1e3
-            self.DP_hydro = self.DP_hydro[:,:self.reservoir.interconnections[1]+1].sum(axis=1, keepdims=True) + self.DP_hydro[:,self.reservoir.interconnections[1]+1:].sum(axis=1, keepdims=True)/self.numberoflaterals
+                # Necessary injection wellhead pressure [kPa]
+                self.DPSurfaceplant = 68.95
+                self.Pprodwellhead = 0.0
 
-            self.DP = self.Pprodwellhead + self.DP_flow + self.DP_hydro - self.DPSurfaceplant
+                # pressure drop in pipes in parallel is the same, so we average things out
+                self.DP_flow = f*(rho*v**2/2)*(dL/diam)/1e3
+                self.DP_flow = self.DP_flow[:,:reservoir.interconnections[1]+1].sum(axis=1, keepdims=True) + self.DP_flow[:,reservoir.interconnections[1]+1:].sum(axis=1, keepdims=True)/reservoir.numberoflaterals
 
-            self.PumpingPowerInj = (self.DP*m/densitywater(T_inj)/self.pumpeff/1e3).squeeze()
-            self.WHP_Prod = -self.DP.squeeze()
-            self.PumpingPowerProd = np.zeros_like(self.WHP_Prod) # no pumps at producers in closed loop designs
+                # hydrsotatic is counted once along depth, so we make sure we do not double count hydrostatic pressure build-up from different laterals
+                self.DP_hydro = rho*9.81*dz/1e3
+                self.DP_hydro = self.DP_hydro[:,:reservoir.interconnections[1]+1].sum(axis=1, keepdims=True) + self.DP_hydro[:,reservoir.interconnections[1]+1:].sum(axis=1, keepdims=True)/reservoir.numberoflaterals
 
-            # Total pumping power
-            self.PumpingPower_ideal = np.maximum(self.PumpingPowerInj + self.PumpingPowerProd, 0.0)
-            self.pumpdepth = np.array([0.0]) #no production pump at any depth
+                self.DP = self.Pprodwellhead + self.DP_flow + self.DP_hydro - self.DPSurfaceplant
+
+                self.PumpingPowerInj = (self.DP*m/densitywater(T_inj)/self.pumpeff/1e3).squeeze()
+                self.WHP_Prod = -self.DP.squeeze()
+                self.PumpingPowerProd = np.zeros_like(self.WHP_Prod) # no pumps at producers in closed loop designs
+
+                # Total pumping power
+                self.PumpingPower_ideal = np.maximum(self.PumpingPowerInj + self.PumpingPowerProd, 0.0)
+                self.pumpdepth = np.array([0.0]) #no production pump at any depth
+            
+            elif "coaxial" in self.reservoir_type.lower():
+                if self.coaxialflowtype == 1: #CXA
+                    self.dh_down = 2 * (reservoir.radius - reservoir.outerradiuscenterpipe) * np.ones(reservoir.N)[None] #hydraulid diameter: https://www.engineeringtoolbox.com/hydraulic-equivalent-diameter-d_458.html
+                    self.dh_up = 2 * reservoir.radiuscenterpipe * np.ones(reservoir.N)[None] #hydraulid diameter: https://www.engineeringtoolbox.com/hydraulic-equivalent-diameter-d_458.html
+                    self.A_down = math.pi * (reservoir.radius**2 - reservoir.outerradiuscenterpipe**2) * np.ones(reservoir.N)[None]
+                    self.A_up = math.pi * reservoir.radiuscenterpipe**2 * np.ones(reservoir.N)[None]
+
+                elif  self.coaxialflowtype == 2: #CXC
+                    self.dh_up = 2 * (reservoir.radius - reservoir.outerradiuscenterpipe) * np.ones(reservoir.N)[None] #hydraulid diameter: https://www.engineeringtoolbox.com/hydraulic-equivalent-diameter-d_458.html
+                    self.dh_down = 2 * reservoir.radiuscenterpipe * np.ones(reservoir.N)[None] #hydraulid diameter: https://www.engineeringtoolbox.com/hydraulic-equivalent-diameter-d_458.html
+                    self.A_up = math.pi * (reservoir.radius**2 - reservoir.outerradiuscenterpipe**2) * np.ones(reservoir.N)[None]
+                    self.A_down = math.pi * reservoir.radiuscenterpipe**2 * np.ones(reservoir.N)[None]
+
+                self.dh = np.hstack((self.dh_down, self.dh_up)).reshape(1,-1)
+                self.A = np.hstack((self.A_down, self.A_up)).reshape(1,-1)
+                self.T = np.hstack((reservoir.Tw_down_Matrix, reservoir.Tw_up_Matrix))
+                self.m = reservoir.mvector[:, None]
+                self.dz = np.vstack((np.abs(np.diff(reservoir.z, axis=0)), -np.abs(np.diff(reservoir.z, axis=0)))).reshape(1, -1)
+                self.dL = np.abs(self.dz)
+
+                self.rho = densitywater(self.T)
+                self.mu = viscositywater(self.T)
+
+                self.v = (self.m/self.rho)/self.A # veclocity [m/s]
+                self.Re = self.rho * self.v * self.dh / self.mu # Renolds number []: https://www.engineeringtoolbox.com/reynolds-number-d_237.html
+                self.f = compute_f(self.Re, self.dh)
+
+                # Necessary injection wellhead pressure [kPa]
+                self.DPSurfaceplant = 68.95
+
+                # pressure drop in pipes in parallel is the same, so we average things out
+                self.DP_flow = (self.f * (self.dL/self.dh) * (self.rho * self.v**2/2) / 1e3).sum(axis=1, keepdims=True) # flow frictional losses [kPa]
+
+                # hydrsotatic is counted once along depth, so we make sure we do not double count hydrostatic pressure build-up from different laterals
+                self.DP_hydro = (self.rho * 9.81 * self.dz / 1e3).sum(axis=1, keepdims=True) # hydrostatic pressure change [kPa]
+
+                self.DP = self.DP_flow - self.DP_hydro - self.DPSurfaceplant
+
+                self.PumpingPowerInj = (self.DP*(self.m/self.rho[:,[0]])/self.pumpeff/1e3).squeeze() # pumping power [Mwe]
+                self.WHP_Prod = -self.DP.squeeze()
+                self.PumpingPowerProd = np.zeros_like(self.WHP_Prod) # no pumps at producers in closed loop designs
+
+                # Total pumping power
+                self.PumpingPower_ideal = np.maximum(self.PumpingPowerInj + self.PumpingPowerProd, 0.0)
+                self.pumpdepth = np.array([0.0]) #no production pump at any depth
+
+            else:
+                Tavg = (3/4*Tres+1/4*T_prd_wh).values #most of temperature drop happens in upper section (because surrounding rock temperature is lowest in upper section)
+                self.rhowaterprod = np.array([self.steamtable.rho_pt(reservoir.Phydrostatic/100/2, t) for t in Tavg]) #densitywater(Tavg)
+                muwaterprod = np.array([self.steamtable.my_pt(reservoir.Phydrostatic/100/2, t) for t in Tavg]) #viscositywater(Tavg)
+                self.vprod = (m_prd/reservoir.numberoflaterals)/self.rhowaterprod/(math.pi/4.*reservoir.prd_well_diam**2)
+                self.Rewaterprod = 4.*(m_prd/reservoir.numberoflaterals)/(muwaterprod*math.pi*reservoir.prd_well_diam) #laminar or turbulent flow?
+                self.f3 = compute_f(self.Rewaterprod, reservoir.prd_well_diam)
+
+                Tavg = T_inj
+                self.rhowaterinj = np.array([self.steamtable.rho_pt(reservoir.Phydrostatic/100/2, t) for t in Tavg])  #densitywater(Tavg)
+                muwaterinj = np.array([self.steamtable.my_pt(reservoir.Phydrostatic/100/2, t) for t in Tavg]) #viscositywater(Tavg)
+                self.vinj = (m_inj/reservoir.numberoflaterals)*(1.+self.waterloss)/self.rhowaterinj/(math.pi/4.*reservoir.inj_well_diam**2)
+                self.Rewaterinj = 4.*(m_inj/reservoir.numberoflaterals)*(1.+self.waterloss)/(muwaterinj*math.pi*reservoir.inj_well_diam) #laminar or turbulent flow?
+                self.f1 = compute_f(self.Rewaterinj, reservoir.inj_well_diam)
+
+                #reservoir hydrostatic pressure [kPa] 
+                self.Phydrostatic = reservoir.Phydrostatic
+
+                # ORC power plant case, with pumps at both injectors and producers
+                Pexcess = 344.7 #[kPa] = 50 psi. Excess pressure covers non-condensable gas pressure and net positive suction head for the pump
+                self.Pprodwellhead = vaporpressurewater(T_prd_wh) + Pexcess #[kPa] is minimum production pump inlet pressure and minimum wellhead pressure
+                # Following tip from CLGWG where operational settings allow for no vapor pressure to form:
+                self.PIkPa = reservoir.PI/(self.rhowaterprod/1000)/100 #convert PI from l/s/bar to kg/s/kPa
+
+                self.pumpdepth = reservoir.well_tvd + (self.Pprodwellhead - self.Phydrostatic + m_prd/self.PIkPa)/(self.f3*(self.rhowaterprod*self.vprod**2/2.)*(1/reservoir.prd_well_diam)/1E3 + self.rhowaterprod*9.81/1E3)
+                self.pumpdepth = np.clip(self.pumpdepth, 0, np.inf)
+                self.pumpdepthfinal = np.max(self.pumpdepth)
+                if self.pumpdepthfinal <= 0:
+                    self.pumpdepthfinal = 0
+                elif self.pumpdepthfinal > 600:
+                    print("Warning: FGEM calculates pump depth to be deeper than 600 m. Verify reservoir pressure, production well flow rate and production well dimensions")
+
+                # Calculate production well pumping pressure [kPa]
+                self.DP3 = self.Pprodwellhead - (self.Phydrostatic - m_prd/self.PIkPa - self.rhowaterprod*9.81*reservoir.well_tvd/1E3 - self.f3*(self.rhowaterprod*self.vprod**2/2.)*(reservoir.well_md/reservoir.prd_well_diam)/1E3)
+                PumpingPowerProd = self.DP3*m_prd*num_prd/self.rhowaterprod/self.pumpeff/1e3 #[MWe] total pumping power for production wells
+                self.PumpingPowerProd = PumpingPowerProd
+                
+                self.IIkPa = reservoir.II/(self.rhowaterinj/1000)/100 #convert II from l/s/bar to kg/s/kPa
+                
+                # Necessary injection wellhead pressure [kPa]
+                self.Pinjwellhead = self.Phydrostatic + m_inj*(1+self.waterloss)/self.IIkPa - self.rhowaterinj*9.81*self.well_tvd/1E3 + self.f1*(self.rhowaterinj*self.vinj**2/2)*(reservoir.well_md/reservoir.inj_well_diam)/1e3
+
+                # Plant outlet pressure [kPa]
+                self.DPSurfaceplant = 68.95 #[kPa] assumes 10 psi pressure drop in surface equipment
+                self.Pplantoutlet = self.Pprodwellhead - self.DPSurfaceplant
+
+                # Injection pump pressure [kPa]
+                self.DP1 = self.Pinjwellhead-self.Pplantoutlet
+                PumpingPowerInj = self.DP1*m_inj*num_inj/self.rhowaterinj/self.pumpeff/1e3 #[MWe] total pumping power for injection wells
+
+                self.PumpingPowerInj = PumpingPowerInj
+                
+                self.WHP_Prod = -self.DP3/100 #bar: net pressure out of well before pumping
+                # Total pumping power
+                self.PumpingPower_ideal = self.PumpingPowerInj + self.PumpingPowerProd
         
-        elif "coaxial" in self.reservoir_type.lower():
-            if self.coaxialflowtype == 1: #CXA
-                self.dh_down = 2 * (self.reservoir.radius - self.reservoir.outerradiuscenterpipe) * np.ones(self.reservoir.N)[None] #hydraulid diameter: https://www.engineeringtoolbox.com/hydraulic-equivalent-diameter-d_458.html
-                self.dh_up = 2 * self.reservoir.radiuscenterpipe * np.ones(self.reservoir.N)[None] #hydraulid diameter: https://www.engineeringtoolbox.com/hydraulic-equivalent-diameter-d_458.html
-                self.A_down = math.pi * (self.reservoir.radius**2 - self.reservoir.outerradiuscenterpipe**2) * np.ones(self.reservoir.N)[None]
-                self.A_up = math.pi * self.reservoir.radiuscenterpipe**2 * np.ones(self.reservoir.N)[None]
-
-            elif  self.coaxialflowtype == 2: #CXC
-                self.dh_up = 2 * (self.reservoir.radius - self.reservoir.outerradiuscenterpipe) * np.ones(self.reservoir.N)[None] #hydraulid diameter: https://www.engineeringtoolbox.com/hydraulic-equivalent-diameter-d_458.html
-                self.dh_down = 2 * self.reservoir.radiuscenterpipe * np.ones(self.reservoir.N)[None] #hydraulid diameter: https://www.engineeringtoolbox.com/hydraulic-equivalent-diameter-d_458.html
-                self.A_up = math.pi * (self.reservoir.radius**2 - self.reservoir.outerradiuscenterpipe**2) * np.ones(self.reservoir.N)[None]
-                self.A_down = math.pi * self.reservoir.radiuscenterpipe**2 * np.ones(self.reservoir.N)[None]
-
-            self.dh = np.hstack((self.dh_down, self.dh_up)).reshape(1,-1)
-            self.A = np.hstack((self.A_down, self.A_up)).reshape(1,-1)
-            self.T = np.hstack((self.reservoir.Tw_down_Matrix, self.reservoir.Tw_up_Matrix))
-            self.m = self.reservoir.mvector[:, None]
-            self.dz = np.vstack((np.abs(np.diff(self.reservoir.z, axis=0)), -np.abs(np.diff(self.reservoir.z, axis=0)))).reshape(1, -1)
-            self.dL = np.abs(self.dz)
-
-            self.rho = densitywater(self.T)
-            self.mu = viscositywater(self.T)
-
-            self.v = (self.m/self.rho)/self.A # veclocity [m/s]
-            self.Re = self.rho * self.v * self.dh / self.mu # Renolds number []: https://www.engineeringtoolbox.com/reynolds-number-d_237.html
-            self.f = compute_f(self.Re, self.dh)
-
-            # Necessary injection wellhead pressure [kPa]
-            self.DPSurfaceplant = 68.95
-
-            # pressure drop in pipes in parallel is the same, so we average things out
-            self.DP_flow = (self.f * (self.dL/self.dh) * (self.rho * self.v**2/2) / 1e3).sum(axis=1, keepdims=True) # flow frictional losses [kPa]
-
-            # hydrsotatic is counted once along depth, so we make sure we do not double count hydrostatic pressure build-up from different laterals
-            self.DP_hydro = (self.rho * 9.81 * self.dz / 1e3).sum(axis=1, keepdims=True) # hydrostatic pressure change [kPa]
-
-            self.DP = self.DP_flow - self.DP_hydro - self.DPSurfaceplant
-
-            self.PumpingPowerInj = (self.DP*(self.m/self.rho[:,[0]])/self.pumpeff/1e3).squeeze() # pumping power [Mwe]
-            self.WHP_Prod = -self.DP.squeeze()
-            self.PumpingPowerProd = np.zeros_like(self.WHP_Prod) # no pumps at producers in closed loop designs
-
-            # Total pumping power
-            self.PumpingPower_ideal = np.maximum(self.PumpingPowerInj + self.PumpingPowerProd, 0.0)
-            self.pumpdepth = np.array([0.0]) #no production pump at any depth
-
-        else:
-            Tavg = (3/4*self.df_records['Res Temp [deg C]']+1/4*self.df_records['WH Temp [deg C]']).values #most of temperature drop happens in upper section (because surrounding rock temperature is lowest in upper section)
-            self.rhowaterprod = np.array([self.steamtable.rho_pt(self.reservoir.Phydrostatic/100/2, t) for t in Tavg]) #densitywater(Tavg)
-            muwaterprod = np.array([self.steamtable.my_pt(self.reservoir.Phydrostatic/100/2, t) for t in Tavg]) #viscositywater(Tavg)
-            self.vprod = (m_prd/self.numberoflaterals)/self.rhowaterprod/(math.pi/4.*self.prd_well_diam**2)
-            self.Rewaterprod = 4.*(m_prd/self.numberoflaterals)/(muwaterprod*math.pi*self.prd_well_diam) #laminar or turbulent flow?
-            self.f3 = compute_f(self.Rewaterprod, self.prd_well_diam)
-
-            Tavg = self.df_records['Inj Temp [deg C]'].values
-            self.rhowaterinj = np.array([self.steamtable.rho_pt(self.reservoir.Phydrostatic/100/2, t) for t in Tavg])  #densitywater(Tavg)
-            muwaterinj = np.array([self.steamtable.my_pt(self.reservoir.Phydrostatic/100/2, t) for t in Tavg]) #viscositywater(Tavg)
-            self.vinj = (m_inj/self.numberoflaterals)*(1.+self.waterloss)/self.rhowaterinj/(math.pi/4.*self.inj_well_diam**2)
-            self.Rewaterinj = 4.*(m_inj/self.numberoflaterals)*(1.+self.waterloss)/(muwaterinj*math.pi*self.inj_well_diam) #laminar or turbulent flow?
-            self.f1 = compute_f(self.Rewaterinj, self.inj_well_diam)
-
-            #reservoir hydrostatic pressure [kPa] 
-            self.Phydrostatic = self.reservoir.Phydrostatic
-
-            # ORC power plant case, with pumps at both injectors and producers
-            Pexcess = 344.7 #[kPa] = 50 psi. Excess pressure covers non-condensable gas pressure and net positive suction head for the pump
-            self.Pprodwellhead = vaporpressurewater(self.df_records['WH Temp [deg C]'].values) + Pexcess #[kPa] is minimum production pump inlet pressure and minimum wellhead pressure
-            # Following tip from CLGWG where operational settings allow for no vapor pressure to form:
-            self.PIkPa = self.PI/(self.rhowaterprod/1000)/100 #convert PI from l/s/bar to kg/s/kPa
-
-            self.pumpdepth = self.well_tvd + (self.Pprodwellhead - self.Phydrostatic + m_prd/self.PIkPa)/(self.f3*(self.rhowaterprod*self.vprod**2/2.)*(1/self.prd_well_diam)/1E3 + self.rhowaterprod*9.81/1E3)
-            self.pumpdepth = np.clip(self.pumpdepth, 0, np.inf)
-            self.pumpdepthfinal = np.max(self.pumpdepth)
-            if self.pumpdepthfinal <= 0:
-                self.pumpdepthfinal = 0
-            elif self.pumpdepthfinal > 600:
-                print("Warning: FGEM calculates pump depth to be deeper than 600 m. Verify reservoir pressure, production well flow rate and production well dimensions")
-
-            # Calculate production well pumping pressure [kPa]
-            self.DP3 = self.Pprodwellhead - (self.Phydrostatic - m_prd/self.PIkPa - self.rhowaterprod*9.81*self.well_tvd/1E3 - self.f3*(self.rhowaterprod*self.vprod**2/2.)*(self.well_md/self.prd_well_diam)/1E3)
-            PumpingPowerProd = self.DP3*m_prd*self.num_prd/self.rhowaterprod/self.pumpeff/1e3 #[MWe] total pumping power for production wells
-            self.PumpingPowerProd = PumpingPowerProd
-            
-            self.IIkPa = self.II/(self.rhowaterinj/1000)/100 #convert II from l/s/bar to kg/s/kPa
-            
-            # Necessary injection wellhead pressure [kPa]
-            self.Pinjwellhead = self.Phydrostatic + m_inj*(1+self.waterloss)/self.IIkPa - self.rhowaterinj*9.81*self.well_tvd/1E3 + self.f1*(self.rhowaterinj*self.vinj**2/2)*(self.well_md/self.inj_well_diam)/1e3
-
-            # Plant outlet pressure [kPa]
-            self.DPSurfaceplant = 68.95 #[kPa] assumes 10 psi pressure drop in surface equipment
-            self.Pplantoutlet = self.Pprodwellhead - self.DPSurfaceplant
-
-            # Injection pump pressure [kPa]
-            self.DP1 = self.Pinjwellhead-self.Pplantoutlet
-            PumpingPowerInj = self.DP1*m_inj*self.num_inj/self.rhowaterinj/self.pumpeff/1e3 #[MWe] total pumping power for injection wells
-
-            self.PumpingPowerInj = PumpingPowerInj
-            
-            self.WHP_Prod = -self.DP3/100 #bar: net pressure out of well before pumping
-            # Total pumping power
-            self.PumpingPower_ideal = self.PumpingPowerInj + self.PumpingPowerProd
-
-        self.df_records['Pumping Power [MWe]'] = self.PumpingPower_ideal[:self.step_idx]
-        self.df_records['Production Pumping Power [MWe]'] = self.PumpingPowerProd[:self.step_idx]
-        self.df_records['Injection Pumping Power [MWe]'] = self.PumpingPowerInj[:self.step_idx]
-        self.df_records["Producer Wellhead Pressure [bar]"] = self.WHP_Prod[:self.step_idx]/100 #['bar']
-
-        self.df_records['Net Power Output [MWe]'] = self.df_records['Turbine Output [MWe]'].values + self.df_records['Battery Output [MWe]'].values - np.clip(self.df_records['Pumping Power [MWe]'].values, 0, np.inf)
-        self.df_records['Net Power Generation [MWhe]'] = self.df_records['Net Power Output [MWe]'].values * pd.Series(self.df_records.index).diff().bfill().apply(lambda x: x.total_seconds()/3600).values
-
-        # if more pumping is needed then we suppose that the operator would slow down operations and not generate
-        self.df_records.loc[self.df_records["Net Power Output [MWe]"] < 0, "Net Power Output [MWe]"] = 0.0
-        self.df_records.loc[self.df_records["Net Power Generation [MWhe]"] < 0, "Net Power Generation [MWhe]"] = 0.0
+            self.res_PumpingPowerInj.append(self.PumpingPowerInj)
+            self.res_PumpingPowerProd.append(self.PumpingPowerProd)
+            self.res_PumpingPower_ideal.append(self.PumpingPower_ideal)
+            self.res_WHP_Prod.append(self.WHP_Prod)
 
     def compute_economics(self, print_outputs=True):
         """Compute the project capex/opex economics.
             Args:
             print_outputs (bool, optional): whether or not to print final economic parameters.
         """
-        
-        self.df_records = pd.DataFrame.from_dict(self.records).set_index("World Time")
-        self.df_records.iloc[0] = self.df_records.iloc[1] # overwrite the zero step as it is based on default params before the simulation actually starts
-        self.compute_pumping()
 
         # Compute Revenues
 
@@ -516,6 +594,11 @@ class World:
             # self.df_records[f"Wholesale Revenue (factor {fat_factor}) [$MM]"] = np.maximum(self.df_records[f"Wholesale Revenue (factor {fat_factor}) [$MM]"], 0.0)
             self.df_records[f"Revenue (factor {fat_factor}) [$MM]"] = self.df_records[f"Wholesale Revenue (factor {fat_factor}) [$MM]"] + self.df_records["RECs Revenue [$MM]"] + self.df_records["Capacity Revenue [$MM]"]
 
+        # total active wells for opex calculations
+        self.num_prd_active = (self.num_prd_drilled + self.num_prd_shutoff).cumsum()
+        self.num_inj_active = (self.num_inj_drilled + self.num_inj_shutoff).cumsum()
+        self.num_wells_active = self.num_prd_active + self.num_inj_active
+
         # Reduce precision of float64 columns for plotting purposes
         float64_cols = list(self.df_records.select_dtypes(include='float64'))
         self.df_records[float64_cols] = self.df_records[float64_cols].astype('float32')
@@ -525,7 +608,7 @@ class World:
         
         # Power plant and upstream costs
         self.Cplant = self.powerplant.compute_cplant(np.median(self.records["WH Temp [deg C]"]), min_cost=self.powerplant_usd_per_kw_min)
-        Cinterconnection = self.powerplant_interconnection_cost * 1e-6 * self.powerplant_capacity * 1e3
+        Cinterconnection = self.powerplant_interconnection_cost * 1e-6 * self.powerplant.powerplant_capacity * 1e3
         self.powerplant_capex = self.Cplant
         self.interconnection_capex = Cinterconnection #$MM
         self.capex["Power Plant"] = np.array([self.powerplant_capex] + [0 for _ in range(self.L-1)])
@@ -539,8 +622,11 @@ class World:
         
         self.expl_cost = (self.exploration_cost_intercept + self.exploration_cost_slope * self.CPrdwell) #MM
         self.capex["Exploration"] = np.array([self.expl_cost] + [0 for _ in range(self.L-1)])
-        self.total_drilling_cost = self.CPrdwell * self.num_prd / self.DSR + self.CInjwell * self.num_inj #$MM
-        self.capex["Drilling"] = np.array([self.total_drilling_cost] + [0 for _ in range(self.L-1)])
+        # self.total_drilling_cost = (self.CPrdwell * self.num_prd + self.CInjwell * self.num_inj)/self.DSR #$MM
+        # self.capex["Drilling"] = self.redrill_01 * self.total_drilling_cost
+        # self.capex["Drilling"] = np.array([self.total_drilling_cost] + [0 for _ in range(self.L-1)])
+        self.capex["Drilling"] = (self.num_prd_drilled * self.CPrdwell + self.num_inj_drilled * self.CInjwell) / self.DSR
+        self.total_drilling_cost = self.capex["Drilling"].sum()
         
         # Pumping Cost
         injpumphp = np.stack(self.df_records["Injection Pumping Power [MWe]"].values).max()*1341
@@ -561,8 +647,12 @@ class World:
         self.capex["Production Pumps"] = np.array([self.prodpump_capex] + [0 for _ in range(self.L-1)])
         Cpumping += Cpumpsprod
         
-        self.injection_stimulation_capex = self.num_inj*self.injection_stimulation_cost if self.SSR>0.0 else 0.0 #$MM
-        self.capex["Injection Stimulation"] = np.array([self.injection_stimulation_capex] + [0 for _ in range(self.L-1)])
+        # self.stimulation_capex = (self.num_inj+self.num_prd)*self.stimulation_cost if self.SSR>0.0 else 0.0 #$MM
+        # self.capex["Stimulation"] = self.redrill_01 * self.stimulation_capex
+        # self.capex["Stimulation"] = np.array([self.stimulation_capex] + [0 for _ in range(self.L-1)])
+        self.capex["Stimulation"] = (self.num_prd_drilled+self.num_inj_drilled)*self.stimulation_cost if self.SSR>0.0 else 0.0 #$MM
+        self.stimulation_capex = self.capex["Stimulation"].sum()
+
         
         # Gathering system and piplines
         self.Cgath = ((self.num_prd+self.num_inj) * 750 * 500)/1e6 #$MM
@@ -571,9 +661,13 @@ class World:
         self.capex["Pipelines"] = np.array([self.Cpipe] + [0 for _ in range(self.L-1)])
         
         # Upstream OPEX
-        self.Claborcorrelation = max(1.1*(589.*math.log(self.powerplant_capacity)-304.)/1e3, 0) #$MM/year
-        self.opex["Power Plant"] = np.array(self.L * [self.powerplant_opex_rate*self.Cplant + self.powerplant_labor_rate*self.Claborcorrelation])
-        self.opex["Wellsite"] = np.array(self.L * [self.wellsite_opex_rate*(self.CPrdwell + self.Cgath) + self.wellsite_labor_rate*self.Claborcorrelation])
+        wells_are_active_01 = np.where(self.num_wells_active, 1, 0)
+        self.Claborcorrelation = max(1.1*(589.*math.log(self.powerplant.powerplant_capacity)-304.)/1e3, 0) #$MM/year
+        self.opex["Power Plant"] = np.array(self.L * [self.powerplant_opex_rate*self.Cplant + self.powerplant_labor_rate*self.Claborcorrelation]) * wells_are_active_01
+        # self.opex["Wellsite"] = np.array(self.L * [self.wellsite_opex_rate*(self.CPrdwell + self.Cgath) + self.wellsite_labor_rate*self.Claborcorrelation])
+        wellsite_and_gath = self.wellsite_opex_rate * (self.num_prd_active * self.CPrdwell + self.num_inj_active * self.CInjwell + self.Cgath)
+        wellsite_labor = wells_are_active_01 * self.wellsite_labor_rate*self.Claborcorrelation
+        self.opex["Wellsite"] =  wellsite_and_gath + wellsite_labor
         self.opex["Makeup Water"] = self.df_records.groupby('Year')["Field Production [kg]"].sum().values*self.waterloss/1000 * 264.172 * (0.00613 if "flash" in self.powerplant_type.lower() else 0.00092) /1e6 # (ref: GETEM page 30)
         
         # TES cost
@@ -653,6 +747,33 @@ class World:
         
         self.compute_npv(print_outputs=print_outputs)
 
+    def postprocess(self, print_outputs=True, compute_pumping=True):
+        """postprocess results to compute pumping power, costs, revenues, economics, etc.
+
+        Args:
+            print_outputs (bool): whether or not to print economics parameters (e.g., NPV, LCOE)
+        """
+
+        self.df_records = pd.DataFrame.from_dict(self.records).set_index("World Time")
+        self.df_records.iloc[0] = self.df_records.iloc[1] # overwrite the zero step as it is based on default params before the simulation actually starts
+        
+        if compute_pumping:
+            self.compute_pumping()
+
+        self.df_records['Pumping Power [MWe]'] = np.sum(self.res_PumpingPower_ideal, axis=0)[:self.step_idx]
+        self.df_records['Production Pumping Power [MWe]'] = np.sum(self.res_PumpingPowerInj, axis=0)[:self.step_idx]
+        self.df_records['Injection Pumping Power [MWe]'] = np.sum(self.res_PumpingPowerProd, axis=0)[:self.step_idx]
+        self.df_records["Producer Wellhead Pressure [bar]"] = np.mean(self.res_WHP_Prod, axis=0)[:self.step_idx]/100 #['bar']
+
+        self.df_records['Net Power Output [MWe]'] = self.df_records['Turbine Output [MWe]'].values + self.df_records['Battery Output [MWe]'].values - np.clip(self.df_records['Pumping Power [MWe]'].values, 0, np.inf)
+        self.df_records['Net Power Generation [MWhe]'] = self.df_records['Net Power Output [MWe]'].values * pd.Series(self.df_records.index).diff().bfill().apply(lambda x: x.total_seconds()/3600).values
+
+        # if more pumping is needed then we suppose that the operator would slow down operations and not generate
+        self.df_records.loc[self.df_records["Net Power Output [MWe]"] < 0, "Net Power Output [MWe]"] = 0.0
+        self.df_records.loc[self.df_records["Net Power Generation [MWhe]"] < 0, "Net Power Generation [MWhe]"] = 0.0
+
+        self.compute_economics(print_outputs)
+
     def update_timestep_for_all_components(self, timestep):
         """Update the simulation timestep size across all project components.
 
@@ -662,7 +783,8 @@ class World:
         if timestep:
             self.timestep = timestep
             self.timestep_hrs = self.timestep.total_seconds() / 3600
-            for component in [self.reservoir, self.powerplant, self.st, self.battery]:
+            components = [self.powerplant, self.st, self.battery] + self.reservoirs
+            for component in components:
                 if component:
                     component.timestep = self.timestep
 
@@ -742,51 +864,90 @@ class World:
         self.battery = LiIonBattery(time_init=self.time_init, duration=self.battery_duration, power_capacity=self.battery_power_capacity, \
                                     battery_roundtrip_eff=self.battery_roundtrip_eff, lifetime=self.battery_lifetime) if max(self.battery_power_capacity) > 0 else None
 
-        # Create reservoir
+        # Create power plant
+        self.powerplant = self.create_powerplant()
 
-        # if reservoir filepath is provided, then override reservoir object to use the provided tabular data
+        # Create reservoir
+        self.reservoirs = [self.create_reservoir(self.num_prd, self.num_inj, self.time_init)]
+        self.num_res = len(self.reservoirs)
+        self.num_res_prd = np.array([r.num_prd for r in self.reservoirs])
+        self.num_res_inj = np.array([r.num_inj for r in self.reservoirs])
+        self.num_prd_drilled = np.array([self.num_prd] + [0 for _ in range(self.L-1)])
+        self.num_inj_drilled = np.array([self.num_prd] + [0 for _ in range(self.L-1)])
+        self.num_prd_shutoff = [0 for _ in range(self.L)]
+        self.num_inj_shutoff = [0 for _ in range(self.L)]
+
+        self.effective_ppc = self.powerplant_capacity #* (self.num_prd > 0) # zero if either no power plant or no wells installed
+        self.update_timestep_for_all_components(self.timestep)
+
+    def create_powerplant(self):
+       # specify what production temperature the power plant should be designed for ...
+        self.Tres_pp_design = self.Tres_init if self.Tres_pp_design is None else self.Tres_pp_design
+        # Create power plant
+        if "geophires" in self.powerplant_type.lower():
+            if "flash" in self.powerplant_type.lower():
+                powerplant = GEOPHIRESFlashPowerPlant(ppc=self.powerplant_capacity, Tres=self.Tres_pp_design, cf=self.cf)
+            else:
+                powerplant = GEOPHIRESORCPowerPlant(ppc=self.powerplant_capacity, Tres=self.Tres_pp_design, cf=self.cf)
+        elif "HighEnthalpyCLGWGPowerPlant" in self.powerplant_type:
+            powerplant = HighEnthalpyCLGWGPowerPlant(Tres=self.Tres_pp_design, 
+                                                          Tamb=self.surface_temp, 
+                                                          m_prd=self.m_prd, num_prd=self.num_prd, 
+                                                          cf=self.cf)
+        else:
+            powerplant = ORCPowerPlant(ppc=self.powerplant_capacity, Tres=self.Tres_pp_design, Tamb=self.df_market['T0'].mean(), 
+                                            m_prd=self.m_prd, m_prd_design=self.m_prd_pp_design, num_prd=self.num_prd, cf=self.cf, k=self.powerplant_k)
+            powerplant_capacity = powerplant.powerplant_capacity
+            if self.num_prd is None:
+                self.num_prd = powerplant.num_prd
+                self.num_inj = max(int(np.floor(self.inj_prd_ratio * self.num_prd)), 1) 
+        
+        return powerplant
+
+    def create_reservoir(self, num_prd, num_inj, time_init):
+       # if reservoir filepath is provided, then override reservoir object to use the provided tabular data
         if self.reservoir_filepath:
-            self.reservoir = TabularReservoir(Tres_init=self.Tres_init, geothermal_gradient=self.geothermal_gradient, surface_temp=self.surface_temp, 
-                            L=self.L, time_init=self.time_init, well_tvd=self.well_tvd, 
-                            prd_well_diam=self.prd_well_diam, inj_well_diam=self.inj_well_diam, num_prd=self.num_prd, 
-                            num_inj=self.num_inj, waterloss=self.waterloss,
+            reservoir = TabularReservoir(Tres_init=self.Tres_init, geothermal_gradient=self.geothermal_gradient, surface_temp=self.surface_temp, 
+                            L=self.L, time_init=time_init, well_tvd=self.well_tvd, 
+                            prd_well_diam=self.prd_well_diam, inj_well_diam=self.inj_well_diam, num_prd=num_prd, num_inj=num_inj, waterloss=self.waterloss,
                             powerplant_type=self.powerplant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II, SSR=self.SSR, 
                             drawdp=self.drawdp, plateau_length=self.plateau_length, reservoir_simulator_settings=self.reservoir_simulator_settings, ramey=self.ramey, PumpingModel=self.PumpingModel,
                             filepath=self.reservoir_filepath)
 
-            self.m_prd = self.reservoir.df["m_kg_per_sec"].median()/self.num_prd
-            self.Tres_init = self.reservoir.Tres_init
+            self.m_prd = reservoir.df["m_prd_kg_per_sec"].median()
+            self.Tres_init = reservoir.Tres_init
             self.geothermal_gradient = (self.Tres_init - self.surface_temp)/self.well_tvd*1000
 
         else:
             if self.reservoir_type == "energy_decline":
-                self.reservoir = EnergyDeclineReservoir(Tres_init=self.Tres_init, Pres_init=self.Pres_init, geothermal_gradient=self.geothermal_gradient, surface_temp=self.surface_temp, 
+                reservoir = EnergyDeclineReservoir(Tres_init=self.Tres_init, Pres_init=self.Pres_init, geothermal_gradient=self.geothermal_gradient, surface_temp=self.surface_temp, 
                                             L=self.L, time_init=self.time_init, well_tvd=self.well_tvd, 
                                             prd_well_diam=self.prd_well_diam, inj_well_diam=self.inj_well_diam, num_prd=self.num_prd, 
                                             num_inj=self.num_inj, waterloss=self.waterloss,
                                             powerplant_type=self.powerplant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II, SSR=self.SSR, V_res=self.V_res, phi_res=self.phi_res,
                                             rock_energy_recovery=self.rock_energy_recovery, reservoir_simulator_settings=self.reservoir_simulator_settings, ramey=self.ramey, PumpingModel=self.PumpingModel)
+
             elif self.reservoir_type == "diffusion_convection":                
-                self.reservoir = DiffusionConvection(Tres_init=self.Tres_init, geothermal_gradient=self.geothermal_gradient, surface_temp=self.surface_temp,
+                reservoir = DiffusionConvection(Tres_init=self.Tres_init, geothermal_gradient=self.geothermal_gradient, surface_temp=self.surface_temp,
                                             L=self.L, time_init=self.time_init, well_tvd=self.well_tvd, 
                                             prd_well_diam=self.prd_well_diam, inj_well_diam=self.inj_well_diam, num_prd=self.num_prd, 
                                             num_inj=self.num_inj, waterloss=self.waterloss, 
                                             powerplant_type=self.powerplant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II, SSR=self.SSR, 
                                             V_res=self.V_res, phi_res=self.phi_res, lateral_length=self.lateral_length, res_thickness=self.res_thickness, 
                                             krock=self.krock, cprock=self.cprock, reservoir_simulator_settings=self.reservoir_simulator_settings, PumpingModel=self.PumpingModel, ramey=self.ramey)
+
             elif self.reservoir_type == "uloop":
-                self.reservoir = ULoopSBT(Tres_init=self.Tres_init, Pres_init=self.Pres_init, surface_temp=self.surface_temp, geothermal_gradient=self.geothermal_gradient,
+                reservoir = ULoopSBT(Tres_init=self.Tres_init, Pres_init=self.Pres_init, surface_temp=self.surface_temp, geothermal_gradient=self.geothermal_gradient,
                             prd_well_diam=self.prd_well_diam, inj_well_diam=self.inj_well_diam, lateral_diam=self.lateral_diam, 
                             well_tvd = self.well_tvd, numberoflaterals=self.numberoflaterals, half_lateral_length = self.half_lateral_length,
                             lateral_spacing=self.lateral_spacing, L=self.L, time_init=self.time_init, num_prd=self.num_prd, num_inj=self.num_inj, 
                             waterloss=self.waterloss, powerplant_type=self.powerplant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II,
                             times_arr=np.linspace(0, self.max_simulation_steps, self.max_simulation_steps), reservoir_simulator_settings=self.reservoir_simulator_settings, PumpingModel=self.PumpingModel,
-                            closedloop_design=self.closedloop_design, ramey=self.ramey, dx=self.dx, k_m=self.krock
-                            )
-                self.total_drilling_length, self.prd_total_drilling_length, self.inj_total_drilling_length = self.reservoir.total_drilling_length, self.reservoir.total_drilling_length/2, self.reservoir.total_drilling_length/2
+                            closedloop_design=self.closedloop_design, ramey=self.ramey, dx=self.dx, k_m=self.krock)
+                self.total_drilling_length, self.prd_total_drilling_length, self.inj_total_drilling_length = reservoir.total_drilling_length, reservoir.total_drilling_length/2, reservoir.total_drilling_length/2
             
             elif self.reservoir_type == "coaxial":
-                self.reservoir = CoaxialSBT(Tres_init=self.Tres_init, Pres_init=self.Pres_init, surface_temp=self.surface_temp, geothermal_gradient=self.geothermal_gradient,
+                reservoir = CoaxialSBT(Tres_init=self.Tres_init, Pres_init=self.Pres_init, surface_temp=self.surface_temp, geothermal_gradient=self.geothermal_gradient,
                                             casing_inner_diam=self.casing_inner_diam, tube_inner_diam=self.tube_inner_diam, tube_thickness=self.tube_thickness, k_tube=self.k_tube,
                                             coaxialflowtype=self.coaxialflowtype,
                                             well_tvd = self.well_tvd, L=self.L, time_init=self.time_init, num_well=self.num_prd, 
@@ -795,36 +956,17 @@ class World:
                                             reservoir_simulator_settings=self.reservoir_simulator_settings, 
                                             dx=self.dx, k_m=self.krock
                                             )
-                self.total_drilling_length, self.prd_total_drilling_length, self.inj_total_drilling_length = self.reservoir.total_drilling_length, self.reservoir.total_drilling_length, 0.0
+                self.total_drilling_length, self.prd_total_drilling_length, self.inj_total_drilling_length = reservoir.total_drilling_length, reservoir.total_drilling_length, 0.0
             else:
                 # Default to percentage drawdown model
-                self.reservoir = PercentageReservoir(Tres_init=self.Tres_init, geothermal_gradient=self.geothermal_gradient, surface_temp=self.surface_temp, 
+                reservoir = PercentageReservoir(Tres_init=self.Tres_init, geothermal_gradient=self.geothermal_gradient, surface_temp=self.surface_temp, 
                                 L=self.L, time_init=self.time_init, well_tvd=self.well_tvd, 
                                 prd_well_diam=self.prd_well_diam, inj_well_diam=self.inj_well_diam, num_prd=self.num_prd, 
                                 num_inj=self.num_inj, waterloss=self.waterloss,
                                 powerplant_type=self.powerplant_type, pumpeff=self.pumpeff, PI=self.PI, II=self.II, SSR=self.SSR, 
                                 drawdp=self.drawdp, plateau_length=self.plateau_length, reservoir_simulator_settings=self.reservoir_simulator_settings, ramey=self.ramey, PumpingModel=self.PumpingModel)
-
-        # specify what production temperature the power plant should be designed for ...
-        self.Tres_pp_design = self.reservoir.Tres_init if self.Tres_pp_design is None else self.Tres_pp_design
-        # Create power plant
-        if "geophires" in self.powerplant_type.lower():
-            if "flash" in self.powerplant_type.lower():
-                self.powerplant = GEOPHIRESFlashPowerPlant(ppc=self.powerplant_capacity, Tres=self.Tres_pp_design, cf=self.cf)
-            else:
-                self.powerplant = GEOPHIRESORCPowerPlant(ppc=self.powerplant_capacity, Tres=self.Tres_pp_design, cf=self.cf)
-        elif "HighEnthalpyCLGWGPowerPlant" in self.powerplant_type:
-            self.powerplant = HighEnthalpyCLGWGPowerPlant(Tres=self.Tres_pp_design, 
-                                                          Tamb=self.surface_temp, 
-                                                          m_prd=self.m_prd, num_prd=self.num_prd, 
-                                                          cf=self.cf)
-        else:
-            self.powerplant = ORCPowerPlant(ppc=self.powerplant_capacity, Tres=self.Tres_pp_design, Tamb=self.df_market['T0'].mean(), 
-                                            m_prd=self.m_prd, m_prd_design=self.m_prd_pp_design, num_prd=self.num_prd, cf=self.cf, k=self.powerplant_k)
-            self.powerplant_capacity = self.powerplant.powerplant_capacity
         
-        self.effective_ppc = self.powerplant_capacity * (self.num_prd > 0) # zero if either no power plant or no wells installed
-        self.update_timestep_for_all_components(self.timestep)
+        return reservoir
 
     def plot_price_distribution(self):
         """Plotting power wholesale market price distribution
@@ -881,7 +1023,7 @@ class World:
         expenditures = {}
 
         include = ['Power Plant', 'Interconnection', 'Exploration', 
-                'Drilling', 'Injection Stimulation', 'Gathering System', 'Pumps', 'TES', 'Battery']
+                'Drilling', 'Stimulation', 'Gathering System', 'Pumps', 'TES', 'Battery']
         costs = {k:v for k,v in self.present_capex_per_unit.items()}
         costs["Pumps"] = costs["Production Pumps"] + costs["Injection Pumps"]
         costs_final = {k:costs[k] for k in include}
@@ -1020,7 +1162,7 @@ class World:
         
         # ignore years with negative power generation, which could occur upon reservoir depletion
         self.NET_GEN = self.df_annual_nominal["Net Power Generation [MWhe]"].sum()
-        self.NET_CF = self.NET_GEN/(8760*self.L)/self.powerplant_capacity
+        self.NET_CF = self.NET_GEN/(8760*self.L)/self.powerplant.powerplant_capacity
         self.AVG_T_AMB = self.df_records["Atm Temp [deg C]"].mean()
         
 
@@ -1087,9 +1229,11 @@ class World:
 
         self.total_drilling_length, self.prd_total_drilling_length, self.inj_total_drilling_length = None, None, None
         self.drilling_cost = None
+        self.redrill_ratio = None
+        self.shutoff_ratio = None
         self.exploration_cost_intercept = 1.0 #$MM
         self.exploration_cost_slope = 0.6 #USD exploration / USD producer capex
-        self.injection_stimulation_cost = 2.5 # $MM per injection well drilled and completed successfully
+        self.stimulation_cost = 2.5 # $MM per injection well drilled and completed successfully
         self.reservoir_filename = None
         self.reservoir_type = "diffusion_convection"
         self.Pres_init = 40
