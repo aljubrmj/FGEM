@@ -10,7 +10,7 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import matplotlib.patches as mpatches
 from pyXSteam.XSteam import XSteam
 import math
-from scipy import integrate
+from scipy import integrate, interpolate
 import pickle
 from scipy.special import erf, erfc, jv, yv, exp1
 from .utils.utils import compute_f, densitywater, viscositywater, heatcapacitywater, vaporpressurewater, nonzero
@@ -123,10 +123,10 @@ class BaseReservoir(object):
         self.krock_wellbore = krock_wellbore
 
         #initialize wellhead and bottomhole quantities
-        self.T_prd_wh = np.array(self.num_prd*[self.Tres_init], dtype='float')
-        self.T_prd_bh = np.array(self.num_prd*[self.Tres_init], dtype='float')
-        self.T_inj_wh = np.array(self.num_inj*[75], dtype='float')
-        self.T_inj_bh = np.array(self.num_inj*[75], dtype='float')
+        self.T_prd_wh = self.Tres_init
+        self.T_prd_bh = self.Tres_init
+        self.T_inj_wh = 75
+        self.T_inj_bh = 75
   
         #reservoir hydrostatic pressure [kPa]
         self.CP = 4.64E-7
@@ -139,6 +139,18 @@ class BaseReservoir(object):
         time_seconds = 8760*3600 # always assume one year passed across
         self.framey_prd = -np.log(1.1*(self.prd_well_diam/2.)/np.sqrt(4.*self.alpharock*time_seconds))-0.29
         self.framey_inj = -np.log(1.1*(self.inj_well_diam/2.)/np.sqrt(4.*self.alpharock*time_seconds))-0.29
+
+        self.shutoff = False
+        self.m_prd_arr = []
+        self.m_inj_arr = []
+        self.T_prd_wh_arr = []
+        self.T_res_arr = []
+        self.T_inj_arr = []
+        self.time_passed_arr = []
+        self.shutoff_arr = []
+        self.num_prd_arr = []
+        self.num_inj_arr = []
+
 
     def pre_model(self, t, m_prd, m_inj, T_inj):
         """Computations to be performed before stepping the reservoir model.
@@ -212,17 +224,14 @@ class BaseReservoir(object):
         """Stepping the reservoir and wellbore models.
 
         Args:
-            m_prd (Union[ndarray,float], optional): producer mass flow rates in kg/s.
+            m_prd (Union[float], optional): producer mass flow rates in kg/s.
             T_inj (float): injection temperature in deg C.
             T_amb (float): ambient temperature in deg C.
             m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
         """
 
-        self.m_prd = m_prd if isinstance(m_prd, np.ndarray) else np.array(self.num_prd * [m_prd])
-        if m_inj is not None:
-            self.m_inj = m_inj if isinstance(m_inj, np.ndarray) else np.array(self.num_inj * [m_inj])
-        else:
-            self.m_inj = np.array(self.num_inj * [self.m_prd.sum()/self.num_inj])
+        self.m_prd = m_prd
+        self.m_inj = m_inj if m_inj is not None else m_prd * self.num_inj/nonzero(self.num_prd)
 
         self.time_curr += self.timestep
         self.pre_model(self.time_curr, self.m_prd, self.m_inj, T_inj)
@@ -233,13 +242,25 @@ class BaseReservoir(object):
             self.reservoir_simulator_settings["time_passed"] += self.timestep.total_seconds()
             if self.reservoir_simulator_settings["time_passed"] >= self.reservoir_simulator_settings["period"]:
                 self.reservoir_simulator_settings["time_passed"] = 0.0
+                self.model(self.time_curr, self.m_prd, self.m_inj, T_inj)
+                self.wellbore_calculations(self.time_curr, self.m_prd, self.m_inj, T_inj, T_amb)
             else:
                 self.wellbore_calculations(self.time_curr, self.m_prd, self.m_inj, T_inj, T_amb)
-                return
 
-        self.model(self.time_curr, self.m_prd, self.m_inj, T_inj)
-        self.wellbore_calculations(self.time_curr, self.m_prd, self.m_inj, T_inj, T_amb)
-  
+        else:
+            self.model(self.time_curr, self.m_prd, self.m_inj, T_inj)
+            self.wellbore_calculations(self.time_curr, self.m_prd, self.m_inj, T_inj, T_amb)
+
+        self.time_passed_arr.append((self.time_curr - self.time_init).total_seconds())
+        self.m_prd_arr.append(self.m_prd.sum())
+        self.m_inj_arr.append(self.m_inj.sum())
+        self.T_prd_wh_arr.append(self.T_prd_wh)
+        self.T_res_arr.append(self.Tres)
+        self.T_inj_arr.append(T_inj)
+        self.shutoff_arr.append(self.shutoff)
+        self.num_prd_arr.append(self.num_prd)
+        self.num_inj_arr.append(self.num_inj)
+
     def pre_compute_ramey(self, t, m_prd, m_inj, T_inj, T_amb):
         """Computations to be performed before Ramey's model calculations.
 
@@ -251,8 +272,6 @@ class BaseReservoir(object):
             T_amb (float): ambient temperature in deg C.
         """
         # average over wells
-        m_prd = m_prd.mean()
-        m_inj = m_inj.mean()
         self.m_prd_ramey_mv_avg = ((self.N_ramey_mv_avg-1) * self.m_prd_ramey_mv_avg + m_prd)/self.N_ramey_mv_avg
         self.m_inj_ramey_mv_avg = ((self.N_ramey_mv_avg-1) * self.m_inj_ramey_mv_avg + m_inj)/self.N_ramey_mv_avg
   
@@ -268,7 +287,7 @@ class BaseReservoir(object):
         """
      
         # Producer calculations
-        Tavg = self.T_prd_bh.mean()
+        Tavg = self.T_prd_bh
         cpwater = heatcapacitywater(Tavg)
         rameyA = self.m_prd_ramey_mv_avg*cpwater*self.framey_prd/2/math.pi/self.krock_wellbore
 
@@ -2821,12 +2840,27 @@ class TabularReservoir(BaseReservoir):
         assert filepath, "UserError: filepath is not specified for the selected tabular reservoir."
 
         self.df = pd.read_csv(self.filepath)
+        assert "Time_sec" in self.df.columns, f"UserError: you must have column with name 'Time' (time in seconds since start of production) in the provided tabular reservoir data at {self.filepath}"
         assert "Tres_deg_C" in self.df.columns, f"UserError: you must have column with name 'Tres_deg_C' (reservoir temperature) in the provided tabular reservoir data at {self.filepath}"
-        assert "m_kg_per_sec" in self.df.columns, f"UserError: you must have column with name 'm_kg_per_sec' (total field geofluid production) in the provided tabular reservoir data at {self.filepath}"
+        assert "m_prd_kg_per_sec" in self.df.columns, f"UserError: you must have column with name 'm_prd_kg_per_sec' (total field geofluid production) in the provided tabular reservoir data at {self.filepath}"
+        assert "m_inj_kg_per_sec" in self.df.columns, f"UserError: you must have column with name 'm_inj_kg_per_sec' (total field geofluid injection) in the provided tabular reservoir data at {self.filepath}"
+        assert "prd_pumping_power_mwe" in self.df.columns, f"UserError: you must have column with name 'prd_pumping_power_mwe' (producer pumping power) in the provided tabular reservoir data at {self.filepath}"
+        assert "int_pumping_power_mwe" in self.df.columns, f"UserError: you must have column with name 'int_pumping_power_mwe' (injection pumping power) in the provided tabular reservoir data at {self.filepath}"
+        assert "WHP_prd_kPa" in self.df.columns, f"UserError: you must have column with name 'WHP_prd_kPa' (producer whp) in the provided tabular reservoir data at {self.filepath}"
+        assert "WHP_inj_kPa" in self.df.columns, f"UserError: you must have column with name 'WHP_inj_kPa' (injection whp) in the provided tabular reservoir data at {self.filepath}"
 
-        self.df["Date"] = pd.to_datetime(self.df["Date"])
+
         Tres_init = self.df.loc[0, "Tres_deg_C"]
         geothermal_gradient = (Tres_init - surface_temp)/well_tvd*1000
+
+        self.Tres_interpolator = interpolate.interp1d(self.df['Time_sec'].values, self.df['Tres_deg_C'].values)
+        self.m_prd_interpolator = interpolate.interp1d(self.df['Time_sec'].values, self.df['m_prd_kg_per_sec'].values)
+        self.m_inj_interpolator = interpolate.interp1d(self.df['Time_sec'].values, self.df['m_inj_kg_per_sec'].values)
+        self.pumping_prd_interpolator = interpolate.interp1d(self.df['Time_sec'].values, self.df['prd_pumping_power_mwe'].values)
+        self.pumping_inj_interpolator = interpolate.interp1d(self.df['Time_sec'].values, self.df['int_pumping_power_mwe'].values)
+        self.WHP_prd_interpolator = interpolate.interp1d(self.df['Time_sec'].values, self.df['WHP_prd_kPa'].values)
+        self.WHP_inj_interpolator = interpolate.interp1d(self.df['Time_sec'].values, self.df['WHP_inj_kPa'].values)
+
 
         super(TabularReservoir, self).__init__(Tres_init,
                                             geothermal_gradient,
@@ -2884,9 +2918,11 @@ class TabularReservoir(BaseReservoir):
             m_inj (Union[ndarray,float], optional): injector mass flow rates in kg/s.
             T_inj (float): injection temperature in deg C.
         """
-        self.Tres = self.df.loc[(self.df["Date"] - t).abs().argmin(), "Tres_deg_C"]
-        self.T_prd_bh = np.array(self.num_prd*[self.Tres], dtype='float')
-        self.T_inj_wh = np.array(self.num_inj*[T_inj], dtype='float')
+        time_passed_seconds = (t - self.time_init).total_seconds()
+        self.Tres = float(self.Tres_interpolator(time_passed_seconds))
+        # self.Tres = self.df.loc[(self.df["Time"] - time_passed_seconds).abs().argmin(), "Tres_deg_C"]
+        self.T_prd_bh = self.Tres
+        self.T_inj_wh = T_inj
 
     def configure_well_dimensions(self):
         """Configuration specifications of a doublet. It requires the specification of a doublet, including the producer dimensions (self.xprod, self.yprod, self.zprod), injector dimensions (self.xinj, self.yinj, self.zinj) and reservoir vertices (self.verts). See Class PercentageReservoir for example implementation.
